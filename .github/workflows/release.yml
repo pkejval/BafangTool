@@ -61,8 +61,8 @@ jobs:
 
       - name: Prepare release file (Windows)
         if: runner.os == 'Windows'
-        run: copy "${{ matrix.exe_path }}" "${{ matrix.release_file }}"
-        shell: cmd
+        run: Copy-Item -Path "${{ matrix.exe_path }}" -Destination "${{ matrix.release_file }}" -Force
+        shell: pwsh
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
