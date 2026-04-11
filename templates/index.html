@@ -750,8 +750,113 @@
 
     <script>
         let isConnected = false;
+        const isCzech = (navigator.language || 'en').toLowerCase().startsWith('cs');
+
+        const I18N_MAP = {
+            'Připojení': 'Connection',
+            'Vyberte sériový port...': 'Select serial port...',
+            'Připojit': 'Connect',
+            'Obnovit': 'Refresh',
+            'Port: ': 'Port: ',
+            'Zařízení: ': 'Device: ',
+            'Připojeno': 'Connected',
+            'Odpojit': 'Disconnect',
+            'Připojte se k controlleru': 'Connect to controller first',
+            'Základní': 'Basic',
+            'Pedály': 'Pedal',
+            'Plyn': 'Throttle',
+            'Profily': 'Profiles',
+            'Systém': 'System',
+            'Základní nastavení': 'Basic settings',
+            'Min. napětí (V)': 'Min voltage (V)',
+            'Max. proud (A)': 'Max current (A)',
+            'Limit (km/h)': 'Speed limit (km/h)',
+            'Velikost kola': 'Wheel size',
+            'Obvod kola (raw)': 'Wheel circumference (raw)',
+            'Úroveň': 'Assist level',
+            'Startovní proud (%)': 'Start current (%)',
+            'Rampa (A/s)': 'Current ramp (A/s)',
+            'Povolen': 'Enabled',
+            'Start (mV)': 'Start (mV)',
+            'Konec (mV)': 'End (mV)',
+            'Typ čidla': 'Sensor type',
+            'Žádné': 'None',
+            'Řídící jednotka': 'Controller only',
+            'Motor': 'Motor only',
+            'Oba': 'Both',
+            'Načíst': 'Read',
+            'Zapsat': 'Write',
+            'Pedálový sensor': 'Pedal sensor',
+            'Sensor': 'Sensor',
+            'Typ': 'Type',
+            'Throttle': 'Throttle',
+            'Napětí': 'Voltage',
+            'Proud': 'Current',
+            'Raw data': 'Raw data',
+            'Experimentální': 'Experimental',
+            'UPOZORNĚNÍ: Experimentální příkazy!': 'WARNING: Experimental commands!',
+            'Odeslat': 'Send',
+            'Scan všech příkazů': 'Scan all commands',
+            'Načíst bloky': 'Load blocks',
+            'Nový profil': 'New profile',
+            'Název': 'Name',
+            'Popis': 'Description',
+            'Uložit': 'Save',
+            'Načtení': 'Load',
+            '-- Vyberte --': '-- Select --',
+            'Nahrát do controlleru': 'Apply to controller',
+            'Uložené profily': 'Saved profiles',
+            'Import/Export': 'Import/Export',
+            'Export': 'Export',
+            'Import': 'Import',
+            'Živá data': 'Live data',
+            'Rychlost: -': 'Speed: -',
+            'Napětí: -': 'Voltage: -',
+            'Proud: -': 'Current: -',
+            'Teplota: -': 'Temperature: -',
+            'Obnovit': 'Refresh',
+            'Chyby': 'Errors',
+            'Stav: -': 'Status: -',
+            'Kód: -': 'Code: -',
+            'Kontrola': 'Check',
+            'Kalibrace': 'Calibration',
+            'Torque kalibrace': 'Torque calibration',
+            'Obvod kola': 'Wheel circumference',
+            'Reset': 'Reset',
+            'Varování: Vymaže veškeré nastavení!': 'Warning: Erases all settings!',
+            'Reset do výchozích': 'Factory reset',
+            'Zavřít': 'Close',
+            'Bafang M400 UART Tool v1.2': 'Bafang M400 UART Tool v1.2'
+        };
+
+        function tr(value) {
+            if (isCzech) return value;
+            return I18N_MAP[value] || value;
+        }
+
+        function localizeDOM() {
+            if (isCzech) return;
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            const nodes = [];
+            while (walker.nextNode()) nodes.push(walker.currentNode);
+            nodes.forEach((n) => {
+                const raw = n.nodeValue;
+                const key = raw.trim();
+                if (!key) return;
+                const translated = I18N_MAP[key];
+                if (translated) {
+                    n.nodeValue = raw.replace(key, translated);
+                }
+            });
+
+            document.querySelectorAll('input[placeholder]').forEach((el) => {
+                const p = el.getAttribute('placeholder');
+                if (I18N_MAP[p]) el.setAttribute('placeholder', I18N_MAP[p]);
+            });
+        }
         
         function init() {
+            localizeDOM();
             refreshPorts();
             generateAssistLevels();
             refreshProfilesList();
@@ -1042,8 +1147,8 @@
             const modal = document.getElementById('modal');
             const content = document.getElementById('modalContent');
             document.getElementById('modalLoader').style.display = type === 'loading' ? 'block' : 'none';
-            document.getElementById('modalTitle').textContent = title;
-            document.getElementById('modalMessage').textContent = message;
+            document.getElementById('modalTitle').textContent = tr(title);
+            document.getElementById('modalMessage').textContent = tr(message);
             content.className = 'modal-content ' + type;
             modal.classList.add('visible');
         }
@@ -1056,10 +1161,10 @@
             if (!isConnected) return;
             fetch('/api/live_data').then(r => r.json()).then(data => {
                 if (data) {
-                    document.getElementById('live_wheel_speed').textContent = 'Rychlost: ' + (data.wheel_speed ? (data.wheel_speed/10).toFixed(1) + ' km/h' : '-');
-                    document.getElementById('live_battery_voltage').textContent = 'Napětí: ' + (data.battery_voltage ? data.battery_voltage.toFixed(1) + ' V' : '-');
-                    document.getElementById('live_battery_current').textContent = 'Proud: ' + (data.battery_current ? data.battery_current.toFixed(1) + ' A' : '-');
-                    document.getElementById('live_controller_temp').textContent = 'Teplota: ' + (data.controller_temp !== undefined ? data.controller_temp + '°C' : '-');
+                    document.getElementById('live_wheel_speed').textContent = (isCzech ? 'Rychlost: ' : 'Speed: ') + (data.wheel_speed ? (data.wheel_speed/10).toFixed(1) + ' km/h' : '-');
+                    document.getElementById('live_battery_voltage').textContent = (isCzech ? 'Napětí: ' : 'Voltage: ') + (data.battery_voltage ? data.battery_voltage.toFixed(1) + ' V' : '-');
+                    document.getElementById('live_battery_current').textContent = (isCzech ? 'Proud: ' : 'Current: ') + (data.battery_current ? data.battery_current.toFixed(1) + ' A' : '-');
+                    document.getElementById('live_controller_temp').textContent = (isCzech ? 'Teplota: ' : 'Temperature: ') + (data.controller_temp !== undefined ? data.controller_temp + '°C' : '-');
                 }
             });
         }
@@ -1068,8 +1173,8 @@
             if (!isConnected) return;
             fetch('/api/errors').then(r => r.json()).then(data => {
                 if (data) {
-                    document.getElementById('system_status').textContent = 'Stav: ' + (data.system_status || '-');
-                    document.getElementById('error_code').textContent = 'Kód: ' + (data.error_code ? '0x' + data.error_code.toString(16).toUpperCase() : '-');
+                    document.getElementById('system_status').textContent = (isCzech ? 'Stav: ' : 'Status: ') + (data.system_status || '-');
+                    document.getElementById('error_code').textContent = (isCzech ? 'Kód: ' : 'Code: ') + (data.error_code ? '0x' + data.error_code.toString(16).toUpperCase() : '-');
                 }
             });
         }

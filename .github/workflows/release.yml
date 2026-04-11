@@ -55,22 +55,41 @@ jobs:
             --add-data "bafang${{ runner.os == 'Windows' && ';' || ':' }}bafang"
         shell: bash
 
+      - name: Compute release filename (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "RELEASE_FILE=BafangTool-${GITHUB_REF_NAME}-linux-x64" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=BafangTool-${GITHUB_REF_NAME}-linux-x64" >> $GITHUB_ENV
+
+      - name: Compute release filename (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "RELEASE_FILE=BafangTool-${GITHUB_REF_NAME}-macos-x64" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=BafangTool-${GITHUB_REF_NAME}-macos-x64" >> $GITHUB_ENV
+
+      - name: Compute release filename (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          "RELEASE_FILE=BafangTool-${env:GITHUB_REF_NAME}-windows-x64.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "ARTIFACT_NAME=BafangTool-${env:GITHUB_REF_NAME}-windows-x64" | Out-File -FilePath $env:GITHUB_ENV -Append
+        shell: pwsh
+
       - name: Prepare release file (Linux/macOS)
         if: runner.os != 'Windows'
-        run: cp "${{ matrix.exe_path }}" "${{ matrix.release_file }}"
+        run: cp "${{ matrix.exe_path }}" "${RELEASE_FILE}"
 
       - name: Prepare release file (Windows)
         if: runner.os == 'Windows'
-        run: Copy-Item -Path "${{ matrix.exe_path }}" -Destination "${{ matrix.release_file }}" -Force
+        run: Copy-Item -Path "${{ matrix.exe_path }}" -Destination "${env:RELEASE_FILE}" -Force
         shell: pwsh
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.release_file }}
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.RELEASE_FILE }}
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.release_file }}
+          files: ${{ env.RELEASE_FILE }}
