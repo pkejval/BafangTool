@@ -1,0 +1,87 @@
+name: Release Builds
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: BafangTool-linux
+            exe_path: dist/BafangTool
+          - os: windows-latest
+            artifact_name: BafangTool-windows
+            exe_path: dist/BafangTool.exe
+          - os: macos-latest
+            artifact_name: BafangTool-macos
+            exe_path: dist/BafangTool
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build executable
+        run: |
+          pyinstaller --noconfirm --clean --onefile --name BafangTool app.py \
+            --add-data "templates${{ runner.os == 'Windows' && ';' || ':' }}templates" \
+            --add-data "bafang${{ runner.os == 'Windows' && ';' || ':' }}bafang"
+        shell: bash
+
+      - name: Package artifact (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p out
+          cp "${{ matrix.exe_path }}" out/
+          cp README.md out/
+          tar -czf "${{ matrix.artifact_name }}.tar.gz" -C out .
+
+      - name: Package artifact (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir out
+          copy "${{ matrix.exe_path }}" out\
+          copy README.md out\
+          powershell Compress-Archive -Path out\* -DestinationPath "${{ matrix.artifact_name }}.zip"
+        shell: cmd
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            *.tar.gz
+            *.zip
+
+      - name: Upload release asset (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact_name }}.tar.gz
+
+      - name: Upload release asset (Windows)
+        if: runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact_name }}.zip

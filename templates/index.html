@@ -1,0 +1,1305 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bafang M400 UART Tool</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #eee;
+            font-size: 13px;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 15px;
+        }
+        
+        header {
+            text-align: center;
+            padding: 20px 0;
+        }
+        
+        header h1 {
+            font-size: 1.8rem;
+            background: linear-gradient(90deg, #00d4ff, #7b2ff7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        header p {
+            color: #666;
+            margin-top: 5px;
+            font-size: 12px;
+        }
+        
+        .connection-panel {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 15px;
+        }
+        
+        .connection-panel h2 {
+            margin-bottom: 10px;
+            color: #00d4ff;
+            font-size: 14px;
+        }
+        
+        .connection-controls {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        select, button, input {
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #333;
+            background: #222;
+            color: #fff;
+            font-size: 12px;
+        }
+        
+        select {
+            flex: 1;
+            min-width: 180px;
+        }
+        
+        button {
+            background: linear-gradient(90deg, #00d4ff, #7b2ff7);
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 12px;
+            padding: 8px 14px;
+        }
+        
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 3px 10px rgba(0, 212, 255, 0.3);
+        }
+        
+        button.secondary {
+            background: #333;
+        }
+        
+        button.danger {
+            background: linear-gradient(90deg, #ff4757, #ff6b81);
+        }
+        
+        .connected-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        
+        .connected-info .connected-port span:last-child,
+        .connected-info .connected-device span:last-child {
+            color: #00d4ff;
+            font-weight: 600;
+        }
+        
+        .connected-info .status-badge {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 11px;
+        }
+        
+        .connected-info .status-badge.connected {
+            background: rgba(46, 204, 113, 0.2);
+            color: #2ecc71;
+        }
+        
+        .connected-info button {
+            margin-left: auto;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 4px;
+            border-radius: 6px;
+        }
+        
+        .tab {
+            padding: 8px 16px;
+            background: transparent;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+        
+        .tab.active {
+            background: linear-gradient(90deg, #00d4ff, #7b2ff7);
+            color: #fff;
+        }
+        
+        .tab-content {
+            display: none;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            padding: 15px;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .tab-content h3 {
+            color: #00d4ff;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+        
+        .param-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+        }
+        
+        .param-group {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 12px;
+            border-radius: 6px;
+        }
+        
+        .param-group h4 {
+            color: #7b2ff7;
+            margin-bottom: 10px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #333;
+            font-size: 12px;
+        }
+        
+        .param-item {
+            margin-bottom: 8px;
+        }
+        
+        .param-item label {
+            display: block;
+            color: #888;
+            font-size: 11px;
+            margin-bottom: 3px;
+        }
+        
+        .param-item input, .param-item select {
+            width: 100%;
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+        
+        .assist-levels {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 12px;
+        }
+        
+        .assist-levels h4 {
+            color: #7b2ff7;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+        
+        .assist-level {
+            display: grid;
+            grid-template-columns: 60px 1fr 1fr;
+            gap: 6px;
+            align-items: center;
+            margin-bottom: 6px;
+            padding: 6px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 4px;
+        }
+        
+        .assist-level .level-num {
+            font-weight: 600;
+            color: #00d4ff;
+            font-size: 12px;
+        }
+        
+        .assist-level input {
+            padding: 4px 8px;
+            font-size: 11px;
+        }
+        
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            padding-top: 12px;
+            border-top: 1px solid #333;
+        }
+        
+        .actions button {
+            flex: 1;
+            max-width: 160px;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        
+        .modal.visible {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: #1a1a2e;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 350px;
+            width: 90%;
+            text-align: center;
+        }
+        
+        .modal-content h3 {
+            margin-bottom: 10px;
+        }
+        
+        .modal-content.success h3 {
+            color: #2ecc71;
+        }
+        
+        .modal-content.error h3 {
+            color: #ff4757;
+        }
+        
+        .loader {
+            border: 3px solid #333;
+            border-top: 3px solid #00d4ff;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 15px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .disabled-overlay {
+            pointer-events: none;
+            opacity: 0.4;
+        }
+        
+        .disabled-message {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(26, 26, 46, 0.95);
+            padding: 25px 40px;
+            border-radius: 10px;
+            border: 2px solid #7b2ff7;
+            z-index: 100;
+            text-align: center;
+        }
+        
+        .disabled-message p {
+            font-size: 14px;
+            color: #00d4ff;
+            margin: 0;
+        }
+        
+        footer {
+            text-align: center;
+            padding: 15px;
+            color: #444;
+            font-size: 11px;
+        }
+        
+        .param-grid + .param-grid {
+            margin-top: 12px;
+        }
+        
+        .device-info {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 8px;
+            border-radius: 4px;
+            margin-top: 8px;
+        }
+        
+        .device-info .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 8px;
+        }
+        
+        .device-info .info-item {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 6px 8px;
+            border-radius: 4px;
+        }
+        
+        .device-info .label {
+            color: #666;
+            font-size: 10px;
+            text-transform: uppercase;
+        }
+        
+        .device-info .value {
+            font-size: 12px;
+            font-weight: 600;
+            color: #00d4ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Bafang M400 UART Tool</h1>
+            <p>Konfigurace motorů Bafang řady M400</p>
+        </header>
+        
+        <div class="connection-panel" id="connectionPanel">
+            <h2>Připojení</h2>
+            
+            <div id="connectView" class="connection-view">
+                <div class="connection-controls">
+                    <select id="portSelect">
+                        <option value="">Vyberte sériový port...</option>
+                    </select>
+                    <button onclick="connect()">Připojit</button>
+                    <button class="secondary" onclick="refreshPorts()">Obnovit</button>
+                </div>
+            </div>
+            
+            <div id="connectedView" class="connection-view" style="display: none;">
+                <div class="connected-info">
+                    <div class="connected-port">
+                        <span class="label">Port: </span>
+                        <span id="connectedPort">-</span>
+                    </div>
+                    <div class="connected-device">
+                        <span class="label">Zařízení: </span>
+                        <span id="connectedDevice">-</span>
+                    </div>
+                    <span class="status-badge connected">Připojeno</span>
+                    <button class="danger" onclick="disconnect()">Odpojit</button>
+                </div>
+            </div>
+        </div>
+        
+        <div id="mainContent" class="disabled-overlay">
+            <div class="disabled-message" id="disabledMessage">
+                <p>Připojte se k controlleru</p>
+            </div>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('basic')">Základní</button>
+            <button class="tab" onclick="switchTab('pedal')">Pedály</button>
+            <button class="tab" onclick="switchTab('throttle')">Plyn</button>
+            <button class="tab" onclick="switchTab('raw')">Raw</button>
+            <button class="tab" onclick="switchTab('experimental')">Exp.</button>
+            <button class="tab" onclick="switchTab('profiles')">Profily</button>
+            <button class="tab" onclick="switchTab('system')">Systém</button>
+        </div>
+        
+        <div id="basic" class="tab-content active">
+            <h3>Základní nastavení</h3>
+            <div class="param-grid">
+                <div class="param-group">
+                    <h4>Baterie</h4>
+                    <div class="param-item">
+                        <label>Min. napětí (V)</label>
+                        <input type="number" id="basic_low_battery_voltage" min="18" max="60" value="28">
+                    </div>
+                    <div class="param-item">
+                        <label>Max. proud (A)</label>
+                        <input type="number" id="basic_max_current" value="16">
+                    </div>
+                </div>
+                <div class="param-group">
+                    <h4>Rychlost</h4>
+                    <div class="param-item">
+                        <label>Limit (km/h)</label>
+                        <input type="number" id="basic_speed_limit" min="1" max="100" value="25">
+                    </div>
+                    <div class="param-item">
+                        <label>Velikost kola</label>
+                        <select id="basic_wheel_size">
+                            <option value="0">700C</option>
+                            <option value="1">26" (A)</option>
+                            <option value="2">26" (B)</option>
+                            <option value="3">27.5"</option>
+                            <option value="4" selected>28"</option>
+                            <option value="5">29"</option>
+                            <option value="6">16"</option>
+                            <option value="7">20"</option>
+                            <option value="8">24"</option>
+                        </select>
+                    </div>
+                    <div class="param-item">
+                        <label>Obvod kola (raw)</label>
+                        <input type="number" id="basic_wheel_circumference" min="0" max="255" value="0">
+                    </div>
+                </div>
+                <div class="param-group">
+                    <h4>Asistence</h4>
+                    <div class="param-item">
+                        <label>Úroveň</label>
+                        <input type="number" id="basic_assist_level" min="0" max="9" value="1">
+                    </div>
+                    <div class="param-item">
+                        <label>Startovní proud (%)</label>
+                        <input type="number" id="basic_start_current" min="0" max="100" value="20">
+                    </div>
+                    <div class="param-item">
+                        <label>Rampa (A/s)</label>
+                        <input type="number" id="basic_current_ramp" min="1" max="50" value="15">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="assist-levels">
+                <h4>Úrovně asistence (proud / rychlost %)</h4>
+                <div id="assistLevels"></div>
+            </div>
+            
+            <div class="param-grid">
+                <div class="param-group">
+                    <h4>Throttle</h4>
+                    <div class="param-item">
+                        <label>Povolen</label>
+                        <input type="checkbox" id="basic_throttle_enabled" checked>
+                    </div>
+                    <div class="param-item">
+                        <label>Start (mV)</label>
+                        <input type="number" id="basic_throttle_start_voltage" min="0" max="5000" value="1100">
+                    </div>
+                    <div class="param-item">
+                        <label>Konec (mV)</label>
+                        <input type="number" id="basic_throttle_end_voltage" min="0" max="5000" value="4200">
+                    </div>
+                </div>
+                <div class="param-group">
+                    <h4>Teplota</h4>
+                    <div class="param-item">
+                        <label>Typ čidla</label>
+                        <select id="basic_temp_sensor_type">
+                            <option value="0">Žádné</option>
+                            <option value="1">Řídící jednotka</option>
+                            <option value="2">Motor</option>
+                            <option value="3" selected>Oba</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="actions">
+                <button onclick="readParams()">Načíst</button>
+                <button onclick="writeBasic()">Zapsat</button>
+            </div>
+        </div>
+        
+        <div id="pedal" class="tab-content">
+            <h3>Pedálový sensor</h3>
+            <div class="param-grid">
+                <div class="param-group">
+                    <h4>Sensor</h4>
+                    <div class="param-item">
+                        <label>Typ</label>
+                        <select id="pedal_pedal_type">
+                            <option value="None">Žádný</option>
+                            <option value="DH-Sensor-12">DH-Sensor-12</option>
+                            <option value="BB-Sensor-32">BB-Sensor-32</option>
+                            <option value="DoubleSignal-24" selected>DoubleSignal-24</option>
+                        </select>
+                    </div>
+                    <div class="param-item">
+                        <label>Signal Number</label>
+                        <input type="number" id="pedal_signal_number" min="1" max="24" value="6">
+                    </div>
+                    <div class="param-item">
+                        <label>Start Pulse</label>
+                        <input type="number" id="pedal_start_pulse" min="0" max="255" value="20">
+                    </div>
+                </div>
+                <div class="param-group">
+                    <h4>Torque</h4>
+                    <div class="param-item">
+                        <label>Gain</label>
+                        <input type="number" id="pedal_torque_gain" min="0" max="255" value="10">
+                    </div>
+                    <div class="param-item">
+                        <label>Offset</label>
+                        <input type="number" id="pedal_torque_offset" min="0" max="255" value="25">
+                    </div>
+                    <div class="param-item">
+                        <label>Step</label>
+                        <input type="number" id="pedal_torque_step" min="0" max="255" value="8">
+                    </div>
+                </div>
+                <div class="param-group">
+                    <h4>Cadence</h4>
+                    <div class="param-item">
+                        <label>Gain</label>
+                        <input type="number" id="pedal_cadence_gain" min="0" max="255" value="20">
+                    </div>
+                    <div class="param-item">
+                        <label>Min</label>
+                        <input type="number" id="pedal_cadence_min" min="0" max="255" value="20">
+                    </div>
+                    <div class="param-item">
+                        <label>Max</label>
+                        <input type="number" id="pedal_cadence_max" min="0" max="255" value="20">
+                    </div>
+                </div>
+            </div>
+            <div class="actions">
+                <button onclick="readParams()">Načíst</button>
+                <button onclick="writePedal()">Zapsat</button>
+            </div>
+        </div>
+        
+        <div id="throttle" class="tab-content">
+            <h3>Throttle</h3>
+            <div class="param-grid">
+                <div class="param-group">
+                    <h4>Napětí</h4>
+                    <div class="param-item">
+                        <label>Start (mV)</label>
+                        <input type="number" id="throttle_start_voltage" min="0" max="5000" value="1100">
+                    </div>
+                    <div class="param-item">
+                        <label>Konec (mV)</label>
+                        <input type="number" id="throttle_end_voltage" min="0" max="5000" value="4200">
+                    </div>
+                </div>
+                <div class="param-group">
+                    <h4>Proud</h4>
+                    <div class="param-item">
+                        <label>Start</label>
+                        <input type="number" id="throttle_start_current" min="0" max="255" value="11">
+                    </div>
+                    <div class="param-item">
+                        <label>Režim</label>
+                        <input type="number" id="throttle_mode" min="0" max="255" value="35">
+                    </div>
+                    <div class="param-item">
+                        <label>Povolen</label>
+                        <input type="checkbox" id="throttle_enabled">
+                    </div>
+                </div>
+            </div>
+            <div class="actions">
+                <button onclick="readParams()">Načíst</button>
+                <button onclick="writeThrottle()">Zapsat</button>
+            </div>
+        </div>
+        
+        <div id="raw" class="tab-content">
+            <h3>Raw data</h3>
+            <div class="param-grid">
+                <div class="param-group">
+                    <h4>Basic</h4>
+                    <div id="raw_basic_hex" style="font-family: monospace; word-break: break-all; background: #111; padding: 8px; border-radius: 4px; font-size: 10px;">-</div>
+                    <button onclick="loadRawBasic()" style="margin-top: 8px;">Načíst</button>
+                </div>
+                <div class="param-group">
+                    <h4>Pedal</h4>
+                    <div id="raw_pedal_hex" style="font-family: monospace; word-break: break-all; background: #111; padding: 8px; border-radius: 4px; font-size: 10px;">-</div>
+                    <button onclick="loadRawPedal()" style="margin-top: 8px;">Načíst</button>
+                </div>
+                <div class="param-group">
+                    <h4>Throttle</h4>
+                    <div id="raw_throttle_hex" style="font-family: monospace; word-break: break-all; background: #111; padding: 8px; border-radius: 4px; font-size: 10px;">-</div>
+                    <button onclick="loadRawThrottle()" style="margin-top: 8px;">Načíst</button>
+                </div>
+            </div>
+        </div>
+        
+        <div id="experimental" class="tab-content">
+            <h3>Experimentální</h3>
+            <p style="color: #ff4757; font-size: 11px; margin-bottom: 10px;">UPOZORNĚNÍ: Experimentální příkazy!</p>
+            <div class="param-grid">
+                <div class="param-group">
+                    <h4>Příkaz (read)</h4>
+                    <input type="text" id="manual_cmd" placeholder="1150" style="width: 100%;">
+                    <button onclick="sendManualCmd()" style="margin-top: 6px;">Odeslat</button>
+                    <div id="manual_cmd_response" style="font-family: monospace; word-break: break-all; background: #111; padding: 8px; border-radius: 4px; font-size: 10px; margin-top: 6px; max-height: 100px; overflow-y: auto;">-</div>
+                </div>
+                <div class="param-group">
+                    <h4>Příkaz (write)</h4>
+                    <input type="text" id="manual_write_hex" placeholder="1652 24 0A..." style="width: 100%;">
+                    <button onclick="sendManualWrite()" style="margin-top: 6px;">Zapsat</button>
+                    <div id="manual_write_response" style="font-family: monospace; word-break: break-all; background: #111; padding: 8px; border-radius: 4px; font-size: 10px; margin-top: 6px; max-height: 100px; overflow-y: auto;">-</div>
+                </div>
+            </div>
+            <button onclick="scanAllCommands()" style="margin-top: 12px;">Scan všech příkazů</button>
+            <div id="scan_results" style="font-family: monospace; word-break: break-all; background: #111; padding: 8px; border-radius: 4px; font-size: 10px; margin-top: 8px; max-height: 150px; overflow-y: auto;">-</div>
+            <button onclick="loadExperimental()" style="margin-top: 12px;">Načíst bloky</button>
+            <div id="experimental_results" style="margin-top: 8px;"></div>
+        </div>
+        
+        <div id="profiles" class="tab-content">
+            <h3>Profily</h3>
+            <div class="param-grid">
+                <div class="param-group">
+                    <h4>Nový profil</h4>
+                    <input type="text" id="new_profile_name" placeholder="Název" style="width: 100%;">
+                    <input type="text" id="new_profile_desc" placeholder="Popis" style="width: 100%; margin-top: 6px;">
+                    <button onclick="saveCurrentProfile()" style="margin-top: 6px;">Uložit</button>
+                </div>
+                <div class="param-group">
+                    <h4>Načtení</h4>
+                    <select id="profile_select" style="width: 100%;">
+                        <option value="">-- Vyberte --</option>
+                    </select>
+                    <button onclick="loadSelectedProfile()" style="margin-top: 6px;">Načíst</button>
+                    <button onclick="applySelectedProfile()" class="secondary" style="margin-top: 4px;">Nahrát do controlleru</button>
+                </div>
+            </div>
+            <h4 style="margin-top: 12px; color: #00d4ff; font-size: 12px;">Uložené profily</h4>
+            <div id="profiles_list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; margin-top: 8px;"></div>
+            <h4 style="margin-top: 12px; color: #00d4ff; font-size: 12px;">Import/Export</h4>
+            <div class="param-grid">
+                <div class="param-group">
+                    <select id="export_profile_select" style="width: 100%;">
+                        <option value="">-- Vyberte --</option>
+                    </select>
+                    <button onclick="exportSelectedProfile()" style="margin-top: 6px;">Export</button>
+                </div>
+                <div class="param-group">
+                    <input type="file" id="import_file" accept=".json" style="width: 100%;">
+                    <button onclick="importProfile()" style="margin-top: 6px;">Import</button>
+                </div>
+            </div>
+        </div>
+        
+        <div id="system" class="tab-content">
+            <h3>Systém</h3>
+            <div class="param-grid">
+                <div class="param-group">
+                    <h4>Živá data</h4>
+                    <div id="live_wheel_speed">Rychlost: -</div>
+                    <div id="live_battery_voltage">Napětí: -</div>
+                    <div id="live_battery_current">Proud: -</div>
+                    <div id="live_controller_temp">Teplota: -</div>
+                    <button onclick="refreshLiveData()" style="margin-top: 6px;">Obnovit</button>
+                </div>
+                <div class="param-group">
+                    <h4>Chyby</h4>
+                    <div id="system_status">Stav: -</div>
+                    <div id="error_code">Kód: -</div>
+                    <button onclick="checkErrors()" style="margin-top: 6px;">Kontrola</button>
+                </div>
+                <div class="param-group">
+                    <h4>Kalibrace</h4>
+                    <button onclick="torqueCalibration()">Torque kalibrace</button>
+                    <div style="margin-top: 8px;">
+                        <input type="number" id="wheel_circumference" value="2105" style="width: 80px;">
+                        <button onclick="setWheelCircumference()">Obvod kola</button>
+                    </div>
+                </div>
+                <div class="param-group">
+                    <h4>Reset</h4>
+                    <p style="color: #ff4757; font-size: 11px;">Varování: Vymaže veškeré nastavení!</p>
+                    <button class="danger" onclick="resetDefaults()" style="margin-top: 6px;">Reset do výchozích</button>
+                </div>
+            </div>
+        </div>
+        
+        <footer>
+            Bafang M400 UART Tool v1.2
+        </footer>
+        </div>
+    </div>
+    
+    <div id="modal" class="modal">
+        <div class="modal-content" id="modalContent">
+            <div id="modalLoader" class="loader" style="display: none;"></div>
+            <h3 id="modalTitle"></h3>
+            <p id="modalMessage"></p>
+            <button onclick="closeModal()" style="margin-top: 12px;">Zavřít</button>
+        </div>
+    </div>
+
+    <script>
+        let isConnected = false;
+        
+        function init() {
+            refreshPorts();
+            generateAssistLevels();
+            refreshProfilesList();
+            updateConnectionUI(false);
+        }
+        
+        function generateAssistLevels() {
+            const container = document.getElementById('assistLevels');
+            container.innerHTML = '';
+            for (let i = 0; i < 10; i++) {
+                const div = document.createElement('div');
+                div.className = 'assist-level';
+                div.innerHTML = `
+                    <span class="level-num">L${i}</span>
+                    <input type="number" id="basic_assist_current_${i}" min="0" max="100" value="100" placeholder="%">
+                    <input type="number" id="basic_assist_speed_${i}" min="0" max="100" value="100" placeholder="%">
+                `;
+                container.appendChild(div);
+            }
+        }
+        
+        function refreshPorts() {
+            fetch('/api/ports')
+                .then(res => res.json())
+                .then(ports => {
+                    const select = document.getElementById('portSelect');
+                    select.innerHTML = '<option value="">Vyberte sériový port...</option>';
+                    ports.forEach(p => {
+                        const option = document.createElement('option');
+                        option.value = p.port;
+                        option.textContent = p.port;
+                        select.appendChild(option);
+                    });
+                });
+        }
+        
+        function connect() {
+            const port = document.getElementById('portSelect').value;
+            if (!port) {
+                showModal('Chyba', 'Vyberte port', 'error');
+                return;
+            }
+            
+            showModal('Připojování', 'Připojuji...', 'loading');
+            
+            fetch('/api/connect', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({port})
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    isConnected = true;
+                    updateConnectionUI(true);
+                    closeModal();
+                    showModal('Úspěch', 'Připojeno', 'success');
+                } else {
+                    closeModal();
+                    showModal('Chyba', data.error || 'Připojení selhalo', 'error');
+                }
+            })
+            .catch(err => {
+                closeModal();
+                showModal('Chyba', 'Nepodařilo se připojit', 'error');
+            });
+        }
+        
+        function disconnect() {
+            fetch('/api/disconnect', {method: 'POST'})
+                .then(() => {
+                    isConnected = false;
+                    updateConnectionUI(false);
+                });
+        }
+        
+        function updateConnectionUI(connected) {
+            const connectView = document.getElementById('connectView');
+            const connectedView = document.getElementById('connectedView');
+            
+            if (connected) {
+                connectView.style.display = 'none';
+                connectedView.style.display = 'block';
+                
+                fetch('/api/status')
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.connected) {
+                            document.getElementById('connectedPort').textContent = data.port;
+                            const deviceName = data.device_info 
+                                ? `${data.device_info.manufacturer || ''} ${data.device_info.model || ''}`.trim() 
+                                : data.port;
+                            document.getElementById('connectedDevice').textContent = deviceName || data.port;
+                        }
+                    });
+            } else {
+                connectView.style.display = 'block';
+                connectedView.style.display = 'none';
+            }
+            
+            setContentEnabled(connected);
+        }
+        
+        function setContentEnabled(enabled) {
+            const mainContent = document.getElementById('mainContent');
+            const disabledMsg = document.getElementById('disabledMessage');
+            
+            if (enabled) {
+                mainContent.classList.remove('disabled-overlay');
+                disabledMsg.style.display = 'none';
+            } else {
+                mainContent.classList.add('disabled-overlay');
+                disabledMsg.style.display = 'block';
+            }
+            
+            const inputs = document.querySelectorAll('input, select, button:not(#portSelect):not([onclick*="connect"]):not([onclick*="refreshPorts"]):not([onclick*="disconnect"]))');
+            inputs.forEach(el => el.disabled = !enabled);
+            
+            document.querySelectorAll('.tab').forEach(tab => {
+                if (tab.getAttribute('onclick') !== "switchTab('system')") {
+                    tab.disabled = !enabled;
+                    tab.style.opacity = enabled ? '1' : '0.5';
+                }
+            });
+        }
+        
+        function readParams() {
+            if (!isConnected) { showModal('Chyba', 'Nejste připojeni', 'error'); return; }
+            showModal('Načítání', 'Načítám...', 'loading');
+            fetch('/api/read')
+                .then(res => res.json())
+                .then(data => {
+                    closeModal();
+                    if (data.basic) {
+                        document.getElementById('basic_low_battery_voltage').value = data.basic.low_battery_voltage;
+                        document.getElementById('basic_max_current').value = data.basic.max_current;
+                        document.getElementById('basic_speed_limit').value = data.basic.speed_limit;
+                        if (data.basic.wheel_size_code !== undefined) document.getElementById('basic_wheel_size').value = data.basic.wheel_size_code;
+                        if (data.basic.wheel_circumference !== undefined) document.getElementById('basic_wheel_circumference').value = data.basic.wheel_circumference;
+                        document.getElementById('basic_assist_level').value = data.basic.assist_level;
+                        document.getElementById('basic_start_current').value = data.basic.start_current;
+                        document.getElementById('basic_current_ramp').value = data.basic.current_ramp;
+                        document.getElementById('basic_throttle_enabled').checked = data.basic.throttle_enabled;
+                        document.getElementById('basic_throttle_start_voltage').value = data.basic.throttle_start_voltage;
+                        document.getElementById('basic_throttle_end_voltage').value = data.basic.throttle_end_voltage;
+                        if (data.basic.temp_sensor_type_code !== undefined) document.getElementById('basic_temp_sensor_type').value = data.basic.temp_sensor_type_code;
+                        
+                        if (data.basic.assist_levels) {
+                            data.basic.assist_levels.forEach((level, i) => {
+                                document.getElementById(`basic_assist_current_${i}`).value = level.current_percent;
+                                document.getElementById(`basic_assist_speed_${i}`).value = level.speed_percent;
+                            });
+                        }
+                    }
+                    if (data.pedal) {
+                        document.getElementById('pedal_pedal_type').value = data.pedal.pedal_type;
+                        document.getElementById('pedal_signal_number').value = data.pedal.signal_number;
+                        document.getElementById('pedal_start_pulse').value = data.pedal.start_pulse;
+                        document.getElementById('pedal_torque_gain').value = data.pedal.torque_gain;
+                        document.getElementById('pedal_torque_offset').value = data.pedal.torque_offset;
+                        document.getElementById('pedal_torque_step').value = data.pedal.torque_step;
+                        document.getElementById('pedal_cadence_gain').value = data.pedal.cadence_gain;
+                        document.getElementById('pedal_cadence_min').value = data.pedal.cadence_min;
+                        document.getElementById('pedal_cadence_max').value = data.pedal.cadence_max;
+                    }
+                    if (data.throttle) {
+                        document.getElementById('throttle_start_voltage').value = data.throttle.start_voltage;
+                        document.getElementById('throttle_end_voltage').value = data.throttle.end_voltage;
+                        document.getElementById('throttle_start_current').value = data.throttle.start_current;
+                        document.getElementById('throttle_mode').value = data.throttle.mode;
+                        document.getElementById('throttle_enabled').checked = data.throttle.enabled;
+                    }
+                    showModal('Úspěch', 'Nastavení načteno', 'success');
+                });
+        }
+        
+        function getBasicParams() {
+            const params = {
+                low_battery_voltage: parseInt(document.getElementById('basic_low_battery_voltage').value),
+                max_current: parseInt(document.getElementById('basic_max_current').value),
+                speed_limit: parseInt(document.getElementById('basic_speed_limit').value),
+                wheel_size_code: parseInt(document.getElementById('basic_wheel_size').value),
+                wheel_circumference: parseInt(document.getElementById('basic_wheel_circumference').value),
+                assist_level: parseInt(document.getElementById('basic_assist_level').value),
+                start_current: parseInt(document.getElementById('basic_start_current').value),
+                current_ramp: parseInt(document.getElementById('basic_current_ramp').value),
+                throttle_enabled: document.getElementById('basic_throttle_enabled').checked,
+                throttle_start_voltage: parseInt(document.getElementById('basic_throttle_start_voltage').value),
+                throttle_end_voltage: parseInt(document.getElementById('basic_throttle_end_voltage').value),
+                temp_sensor_type: parseInt(document.getElementById('basic_temp_sensor_type').value)
+            };
+            for (let i = 0; i < 10; i++) {
+                params[`assist_current_${i}`] = parseInt(document.getElementById(`basic_assist_current_${i}`).value);
+                params[`assist_speed_${i}`] = parseInt(document.getElementById(`basic_assist_speed_${i}`).value);
+            }
+            return params;
+        }
+        
+        function writeBasic() {
+            if (!isConnected) { showModal('Chyba', 'Nejste připojeni', 'error'); return; }
+            showModal('Zápis', 'Zapisuji...', 'loading');
+            fetch('/api/write_basic', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(getBasicParams())
+            })
+            .then(res => res.json())
+            .then(data => {
+                closeModal();
+                if (data.success) {
+                    showModal('Úspěch', data.message || 'Zapsáno', 'success');
+                } else {
+                    showModal('Chyba', data.error || 'Zápis selhal', 'error');
+                }
+            });
+        }
+        
+        function getPedalParams() {
+            return {
+                pedal_type: document.getElementById('pedal_pedal_type').value,
+                signal_number: parseInt(document.getElementById('pedal_signal_number').value),
+                start_pulse: parseInt(document.getElementById('pedal_start_pulse').value),
+                torque_gain: parseInt(document.getElementById('pedal_torque_gain').value),
+                torque_offset: parseInt(document.getElementById('pedal_torque_offset').value),
+                torque_step: parseInt(document.getElementById('pedal_torque_step').value),
+                cadence_gain: parseInt(document.getElementById('pedal_cadence_gain').value),
+                cadence_min: parseInt(document.getElementById('pedal_cadence_min').value),
+                cadence_max: parseInt(document.getElementById('pedal_cadence_max').value)
+            };
+        }
+        
+        function writePedal() {
+            if (!isConnected) { showModal('Chyba', 'Nejste připojeni', 'error'); return; }
+            showModal('Zápis', 'Zapisuji...', 'loading');
+            fetch('/api/write_pedal', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(getPedalParams())
+            })
+            .then(res => res.json())
+            .then(data => {
+                closeModal();
+                if (data.success) {
+                    showModal('Úspěch', data.message || 'Zapsáno', 'success');
+                } else {
+                    showModal('Chyba', data.error || 'Zápis selhal', 'error');
+                }
+            });
+        }
+        
+        function getThrottleParams() {
+            return {
+                start_voltage: parseInt(document.getElementById('throttle_start_voltage').value),
+                end_voltage: parseInt(document.getElementById('throttle_end_voltage').value),
+                start_current: parseInt(document.getElementById('throttle_start_current').value),
+                mode: parseInt(document.getElementById('throttle_mode').value),
+                enabled: document.getElementById('throttle_enabled').checked
+            };
+        }
+        
+        function writeThrottle() {
+            if (!isConnected) { showModal('Chyba', 'Nejste připojeni', 'error'); return; }
+            showModal('Zápis', 'Zapisuji...', 'loading');
+            fetch('/api/write_throttle', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(getThrottleParams())
+            })
+            .then(res => res.json())
+            .then(data => {
+                closeModal();
+                if (data.success) {
+                    showModal('Úspěch', data.message || 'Zapsáno', 'success');
+                } else {
+                    showModal('Chyba', data.error || 'Zápis selhal', 'error');
+                }
+            });
+        }
+        
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelector(`.tab[onclick="switchTab('${tabId}')"]`).classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+        }
+        
+        function showModal(title, message, type) {
+            const modal = document.getElementById('modal');
+            const content = document.getElementById('modalContent');
+            document.getElementById('modalLoader').style.display = type === 'loading' ? 'block' : 'none';
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalMessage').textContent = message;
+            content.className = 'modal-content ' + type;
+            modal.classList.add('visible');
+        }
+        
+        function closeModal() {
+            document.getElementById('modal').classList.remove('visible');
+        }
+        
+        function refreshLiveData() {
+            if (!isConnected) return;
+            fetch('/api/live_data').then(r => r.json()).then(data => {
+                if (data) {
+                    document.getElementById('live_wheel_speed').textContent = 'Rychlost: ' + (data.wheel_speed ? (data.wheel_speed/10).toFixed(1) + ' km/h' : '-');
+                    document.getElementById('live_battery_voltage').textContent = 'Napětí: ' + (data.battery_voltage ? data.battery_voltage.toFixed(1) + ' V' : '-');
+                    document.getElementById('live_battery_current').textContent = 'Proud: ' + (data.battery_current ? data.battery_current.toFixed(1) + ' A' : '-');
+                    document.getElementById('live_controller_temp').textContent = 'Teplota: ' + (data.controller_temp !== undefined ? data.controller_temp + '°C' : '-');
+                }
+            });
+        }
+        
+        function checkErrors() {
+            if (!isConnected) return;
+            fetch('/api/errors').then(r => r.json()).then(data => {
+                if (data) {
+                    document.getElementById('system_status').textContent = 'Stav: ' + (data.system_status || '-');
+                    document.getElementById('error_code').textContent = 'Kód: ' + (data.error_code ? '0x' + data.error_code.toString(16).toUpperCase() : '-');
+                }
+            });
+        }
+        
+        function torqueCalibration() {
+            if (!isConnected) return;
+            fetch('/api/torque_calibration', {method: 'POST'}).then(r => r.json()).then(data => {
+                showModal(data.success ? 'Úspěch' : 'Chyba', data.success ? 'Kalibrace dokončena' : 'Selhala', data.success ? 'success' : 'error');
+            });
+        }
+        
+        function setWheelCircumference() {
+            if (!isConnected) return;
+            fetch('/api/wheel_circumference', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({circumference: parseInt(document.getElementById('wheel_circumference').value)})
+            }).then(r => r.json()).then(data => {
+                showModal(data.success ? 'Úspěch' : 'Chyba', data.success ? 'Nastaveno' : 'Selhalo', data.success ? 'success' : 'error');
+            });
+        }
+        
+        function resetDefaults() {
+            if (!isConnected || !confirm('Opravdu resetovat do výchozích?')) return;
+            fetch('/api/reset', {method: 'POST'}).then(r => r.json()).then(data => {
+                showModal(data.success ? 'Úspěch' : 'Chyba', data.success ? 'Resetováno' : 'Selhalo', data.success ? 'success' : 'error');
+            });
+        }
+        
+        function loadRawBasic() {
+            if (!isConnected) return;
+            fetch('/api/read_raw_basic').then(r => r.json()).then(data => {
+                if (data) document.getElementById('raw_basic_hex').textContent = data.full_hex || '-';
+            });
+        }
+        
+        function loadRawPedal() {
+            if (!isConnected) return;
+            fetch('/api/read_raw_pedal').then(r => r.json()).then(data => {
+                if (data) document.getElementById('raw_pedal_hex').textContent = data.full_hex || '-';
+            });
+        }
+        
+        function loadRawThrottle() {
+            if (!isConnected) return;
+            fetch('/api/read_raw_throttle').then(r => r.json()).then(data => {
+                if (data) document.getElementById('raw_throttle_hex').textContent = data.full_hex || '-';
+            });
+        }
+        
+        function sendManualCmd() {
+            if (!isConnected) return;
+            fetch('/api/send_raw_command', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({command: document.getElementById('manual_cmd').value})
+            }).then(r => r.json()).then(data => {
+                document.getElementById('manual_cmd_response').textContent = JSON.stringify(data, null, 2);
+            });
+        }
+        
+        function sendManualWrite() {
+            if (!isConnected) return;
+            fetch('/api/write_custom_raw', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({hex: document.getElementById('manual_write_hex').value})
+            }).then(r => r.json()).then(data => {
+                document.getElementById('manual_write_response').textContent = JSON.stringify(data, null, 2);
+            });
+        }
+        
+        function scanAllCommands() {
+            if (!isConnected) return;
+            showModal('Scan', 'Skenuji...', 'loading');
+            fetch('/api/scan_commands').then(r => r.json()).then(data => {
+                closeModal();
+                document.getElementById('scan_results').textContent = JSON.stringify(data, null, 2);
+            });
+        }
+        
+        function loadExperimental() {
+            if (!isConnected) return;
+            fetch('/api/read_experimental').then(r => r.json()).then(data => {
+                const container = document.getElementById('experimental_results');
+                container.innerHTML = '';
+                if (data) {
+                    Object.keys(data).forEach(key => {
+                        const div = document.createElement('div');
+                        div.style.cssText = 'background: #111; padding: 6px; margin: 4px 0; border-radius: 4px; font-size: 10px;';
+                        div.innerHTML = `<strong>${key}</strong>: ${data[key].response_hex || '-'}`;
+                        container.appendChild(div);
+                    });
+                }
+            });
+        }
+        
+        function refreshProfilesList() {
+            fetch('/api/profiles').then(r => r.json()).then(profiles => {
+                const list = document.getElementById('profiles_list');
+                list.innerHTML = '';
+                const select = document.getElementById('profile_select');
+                select.innerHTML = '<option value="">-- Vyberte --</option>';
+                const exportSelect = document.getElementById('export_profile_select');
+                exportSelect.innerHTML = '<option value="">-- Vyberte --</option>';
+                
+                Object.keys(profiles).forEach(name => {
+                    const p = profiles[name];
+                    const div = document.createElement('div');
+                    div.style.cssText = 'background: #111; padding: 8px; border-radius: 4px;';
+                    div.innerHTML = `<strong>${p.name}</strong><br><span style="color: #666; font-size: 11px;">${p.description || ''}</span><br><button onclick="loadProfileByName('${name}')" style="padding: 4px 8px; font-size: 10px;">Načíst</button> <button onclick="applyProfileByName('${name}')" style="padding: 4px 8px; font-size: 10px;">Nahrát</button> <button onclick="deleteProfileByName('${name}')" class="danger" style="padding: 4px 8px; font-size: 10px;">X</button>`;
+                    list.appendChild(div);
+                    
+                    select.appendChild(new Option(p.name, name));
+                    exportSelect.appendChild(new Option(p.name, name));
+                });
+            });
+        }
+        
+        function saveCurrentProfile() {
+            const name = document.getElementById('new_profile_name').value.trim();
+            if (!name) { showModal('Chyba', 'Zadejte název', 'error'); return; }
+            if (!isConnected) { showModal('Chyba', 'Nejprve se připojte ke controlleru', 'error'); return; }
+            
+            fetch(`/api/profiles/${encodeURIComponent(name).replace(/%20/g, '_')}`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({config: {basic: getBasicParams(), pedal: getPedalParams(), throttle: getThrottleParams()}, description: document.getElementById('new_profile_desc').value})
+            }).then(r => r.json()).then(data => {
+                if (data.success) {
+                    document.getElementById('new_profile_name').value = '';
+                    document.getElementById('new_profile_desc').value = '';
+                    refreshProfilesList();
+                    showModal('Úspěch', 'Profil uložen', 'success');
+                }
+            });
+        }
+        
+        function loadSelectedProfile() {
+            const name = document.getElementById('profile_select').value;
+            if (name) loadProfileByName(name);
+        }
+        
+        function loadProfileByName(name) {
+            fetch(`/api/profiles/${encodeURIComponent(name).replace(/%20/g, '_')}`).then(r => r.json()).then(data => {
+                if (data.config && data.config.basic) {
+                    const b = data.config.basic;
+                    if (b.low_battery_voltage) document.getElementById('basic_low_battery_voltage').value = b.low_battery_voltage;
+                    if (b.max_current) document.getElementById('basic_max_current').value = b.max_current;
+                    if (b.speed_limit) document.getElementById('basic_speed_limit').value = b.speed_limit;
+                    if (b.start_current) document.getElementById('basic_start_current').value = b.start_current;
+                    if (b.current_ramp) document.getElementById('basic_current_ramp').value = b.current_ramp;
+                    for (let i = 0; i < 10; i++) {
+                        if (b[`assist_current_${i}`] !== undefined) document.getElementById(`basic_assist_current_${i}`).value = b[`assist_current_${i}`];
+                        if (b[`assist_speed_${i}`] !== undefined) document.getElementById(`basic_assist_speed_${i}`).value = b[`assist_speed_${i}`];
+                    }
+                }
+                if (data.config && data.config.pedal) {
+                    const p = data.config.pedal;
+                    if (p.pedal_type) document.getElementById('pedal_pedal_type').value = p.pedal_type;
+                    if (p.signal_number) document.getElementById('pedal_signal_number').value = p.signal_number;
+                    if (p.torque_gain) document.getElementById('pedal_torque_gain').value = p.torque_gain;
+                    if (p.cadence_gain) document.getElementById('pedal_cadence_gain').value = p.cadence_gain;
+                }
+                showModal('Úspěch', 'Profil načten', 'success');
+            });
+        }
+        
+        function applySelectedProfile() {
+            const name = document.getElementById('profile_select').value;
+            if (name) applyProfileByName(name);
+        }
+        
+        function applyProfileByName(name) {
+            if (!isConnected) return;
+            fetch(`/api/profiles/${encodeURIComponent(name).replace(/%20/g, '_')}/apply`, {method: 'POST'}).then(async r => {
+                const data = await r.json();
+                if (!r.ok && r.status === 409) {
+                    showModal('Chyba', data.error || 'Profil je vázaný na jiný controller', 'error');
+                    return;
+                }
+                showModal(data.success ? 'Úspěch' : 'Chyba', data.success ? 'Nahráno' : (data.error || 'Selhalo'), data.success ? 'success' : 'error');
+            });
+        }
+        
+        function deleteProfileByName(name) {
+            if (!confirm('Smazat?')) return;
+            fetch(`/api/profiles/${encodeURIComponent(name).replace(/%20/g, '_')}`, {method: 'DELETE'}).then(r => r.json()).then(data => {
+                if (data.success) refreshProfilesList();
+            });
+        }
+        
+        function exportSelectedProfile() {
+            const name = document.getElementById('export_profile_select').value;
+            if (!name) return;
+            fetch(`/api/profiles/export/${encodeURIComponent(name).replace(/%20/g, '_')}`).then(r => r.json()).then(data => {
+                const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = data.name + '.json';
+                a.click();
+            });
+        }
+        
+        function importProfile() {
+            if (!isConnected) { showModal('Chyba', 'Pro import profilu se nejprve připojte ke controlleru', 'error'); return; }
+            const file = document.getElementById('import_file').files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    fetch('/api/profiles/import', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({name: data.name || 'Imported', config: data.config || {}, description: data.description || ''})
+                    }).then(r => r.json()).then(result => {
+                        if (result.success) {
+                            refreshProfilesList();
+                            showModal('Úspěch', 'Importováno', 'success');
+                        }
+                    });
+                } catch(err) {
+                    showModal('Chyba', 'Neplatný soubor', 'error');
+                }
+            };
+            reader.readAsText(file);
+        }
+        
+        init();
+    </script>
+</body>
+</html>
