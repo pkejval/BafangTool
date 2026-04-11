@@ -245,10 +245,14 @@ class BafangUART:
         cmd = bytes([0x11, 0x52])
         response = self._send_with_retry(cmd, 0x52)
         
-        if not response or len(response) < 27:
+        if not response:
             return None
         
-        data = response[2:27]
+        data = response[2:]
+        if len(data) < 25:
+            return None
+        data = data[:26]
+        temp_sensor_type_code = data[25] if len(data) > 25 else None
         
         result = {
             'low_battery_voltage': data[0] + 18,
@@ -268,8 +272,8 @@ class BafangUART:
             'throttle_enabled': (data[22] & 0x01) == 0x01,
             'throttle_start_voltage': data[23] * 100,
             'throttle_end_voltage': data[24] * 100,
-            'temp_sensor_type_code': data[25],
-            'temp_sensor_type': self._pick(["No sensor", "Controller only", "Motor only", "Both"], data[25]),
+            'temp_sensor_type_code': temp_sensor_type_code,
+            'temp_sensor_type': self._pick(["No sensor", "Controller only", "Motor only", "Both"], temp_sensor_type_code) if temp_sensor_type_code is not None else "Unavailable",
             'raw_bytes': list(data)
         }
         self._set_cache('basic', result)
@@ -317,17 +321,20 @@ class BafangUART:
         cmd = bytes([0x11, 0x54])
         response = self._send_with_retry(cmd, 0x54)
         
-        if not response or len(response) < 9:
+        if not response:
             return None
         
-        data = response[2:9]
+        data = response[2:]
+        if len(data) < 5:
+            return None
+        start_percent = data[5] if len(data) > 5 else None
         result = {
             'start_voltage': data[0] * 100,
             'end_voltage': data[1] * 100,
             'start_current': data[2],
             'mode': data[3],
             'enabled': data[4] == 0x01,
-            'start_percent': data[7],
+            'start_percent': start_percent,
             'raw_bytes': list(data)
         }
         self._set_cache('throttle', result)
