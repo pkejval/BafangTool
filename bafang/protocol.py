@@ -42,6 +42,7 @@ class BafangUART:
         self._last_read: Dict[str, bytes] = {}
         self._initial_snapshot: Dict[str, Dict[str, Any]] = {}
         self._allowed_keys: Dict[str, set] = {}
+        self._section_meta: Dict[str, Dict[str, Any]] = {}
 
     def connect(self) -> bool:
         try:
@@ -72,6 +73,7 @@ class BafangUART:
         self._last_read.clear()
         self._initial_snapshot.clear()
         self._allowed_keys.clear()
+        self._section_meta.clear()
 
     def _calculate_checksum(self, data: bytes) -> int:
         return sum(data) % 256
@@ -137,6 +139,65 @@ class BafangUART:
             self._initial_snapshot[section] = dict(values)
             self._allowed_keys[section] = set(values.keys())
 
+    def _set_section_meta(self, section: str, variant: str, warning: Optional[str] = None):
+        self._section_meta[section] = {
+            'variant': variant,
+            'warning': warning,
+            'safe_to_write': variant not in ('fallback',),
+        }
+
+    def _section_write_guard(self, section: str) -> Optional[Dict[str, Any]]:
+        meta = self._section_meta.get(section, {})
+        if not meta:
+            return {
+                'success': False,
+                'error': 'Missing protocol metadata. Please read controller first.',
+                'code': None,
+                'exception_type': 'ProtocolStateError',
+            }
+        if not bool(meta.get('safe_to_write', False)):
+            return {
+                'success': False,
+                'error': f"Unsafe write blocked for {section} (variant: {meta.get('variant', 'unknown')}).",
+                'code': None,
+                'exception_type': 'UnsafeVariantError',
+                'protocol_variant': meta.get('variant'),
+                'warning': meta.get('warning'),
+            }
+        return None
+
+    def _clamp(self, value: Any, lower: int, upper: int, default: int) -> int:
+        try:
+            ivalue = int(value)
+        except Exception:
+            ivalue = default
+        if ivalue < lower:
+            return lower
+        if ivalue > upper:
+            return upper
+        return ivalue
+
+    def _debug_hex_for_section(self, section: str) -> Optional[str]:
+        response = self._last_read.get(section)
+        if response is None:
+            return None
+        return response.hex()
+
+    def _log_parse_issue(self, section: str, message: str):
+        logger.warning(
+            "Protocol parse issue section=%s message=%s variant=%s device=%s raw=%s",
+            section,
+            message,
+            self._section_meta.get(section, {}).get('variant', 'unknown'),
+            {
+                'manufacturer': self.device_info.get('manufacturer'),
+                'model': self.device_info.get('model'),
+                'fw_version': self.device_info.get('fw_version'),
+                'hw_version': self.device_info.get('hw_version'),
+            },
+            self._debug_hex_for_section(section),
+        )
+
     def _changed_only(self, section: str, incoming: Dict[str, Any]) -> Dict[str, Any]:
         if section not in self._initial_snapshot:
             return {}
@@ -155,6 +216,8 @@ class BafangUART:
             'speed_limit': data.get('speed_limit'),
             'wheel_size_code': data.get('wheel_size_code', 4),
             'wheel_circumference': data.get('wheel_circumference', 0),
+            'speedometer_type_code': data.get('speedometer_type_code', 0),
+            'speedometer_signals': data.get('speedometer_signals', 1),
             'assist_level': data.get('assist_level', 1),
             'start_current': data.get('start_current', 20),
             'start_current_decay': data.get('start_current_decay', 10),
@@ -176,20 +239,23 @@ class BafangUART:
         return out
 
     def _pedal_to_writable(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        return {
+        writable = {
             'pedal_type': data.get('pedal_type', 'DoubleSignal-24'),
             'designated_assist': data.get('designated_assist', 0xFF),
             'speed_limit': data.get('speed_limit', 0xFF),
             'circumference': data.get('circumference', 0),
-            'signal_number': data.get('signal_number', 6),
-            'start_pulse': data.get('start_pulse', 0x14),
-            'torque_gain': data.get('torque_gain', 0x0A),
-            'torque_offset': data.get('torque_offset', 0x19),
-            'torque_step': data.get('torque_step', 0x08),
-            'cadence_gain': data.get('cadence_gain', 0x14),
-            'cadence_min': data.get('cadence_min', 0x14),
-            'cadence_max': data.get('cadence_max', 0x14),
+            'signal_number': data.get('signal_number', data.get('pedal_signals_before_start', 6)),
+            'start_pulse': data.get('start_pulse', data.get('start_current', 0x14)),
+            'torque_gain': data.get('torque_gain', data.get('slow_start_mode', 0x0A)),
+            'torque_offset': data.get('torque_offset', data.get('stop_delay', 0x19)),
+            'torque_step': data.get('torque_step', data.get('current_decay', 0x08)),
+            'cadence_gain': data.get('cadence_gain', data.get('stop_decay', 0x14)),
+            'cadence_min': data.get('cadence_min', data.get('keep_current', 0x14)),
+            'cadence_max': data.get('cadence_max', data.get('cadence_min', data.get('keep_current', 0x14))),
         }
+        if 'protocol_variant' in data:
+            writable['protocol_variant'] = data.get('protocol_variant')
+        return writable
 
     def _throttle_to_writable(self, data: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -197,13 +263,63 @@ class BafangUART:
             'end_voltage': data.get('end_voltage', 4200),
             'start_current': data.get('start_current', 0x0B),
             'mode': data.get('mode', 0x23),
-            'enabled': data.get('enabled', 0),
+            'enabled': 1 if data.get('enabled', False) else 0,
         }
 
     def _pick(self, values: list, idx: int, default: Any = "Unknown") -> Any:
         if 0 <= idx < len(values):
             return values[idx]
         return default
+
+    def _get_byte(self, data: bytes, idx: int, default: Any = None) -> Any:
+        if 0 <= idx < len(data):
+            return data[idx]
+        return default
+
+    def _looks_like_openbafang_basic(self, payload: bytes) -> bool:
+        if len(payload) < 24:
+            return False
+        if len(payload) > 24 and payload[24] > 5:
+            return False
+        speedmeter_raw = payload[23]
+        speedmeter_type = (speedmeter_raw & 0xC0) >> 6
+        magnets = speedmeter_raw & 0x3F
+        if speedmeter_type > 2:
+            return False
+        if magnets < 1 or magnets > 32:
+            return False
+        for i in range(10):
+            if payload[2 + i] > 100 or payload[12 + i] > 100:
+                return False
+        return True
+
+    def _wheel_size_code_from_diameter(self, wheel_diameter: float) -> int:
+        mapping = {
+            12.0: 9,
+            16.0: 6,
+            20.0: 7,
+            24.0: 8,
+            26.0: 1,
+            27.5: 3,
+            28.0: 4,
+            29.0: 5,
+        }
+        return mapping.get(round(wheel_diameter * 2) / 2, 4)
+
+    def _wheel_diameter_from_code(self, wheel_size_code: int) -> float:
+        mapping = {
+            0: 28.0,
+            1: 26.0,
+            2: 26.0,
+            3: 27.5,
+            4: 28.0,
+            5: 29.0,
+            6: 16.0,
+            7: 20.0,
+            8: 24.0,
+            9: 12.0,
+        }
+        return mapping.get(self._clamp(wheel_size_code, 0, 9, 4), 28.0)
 
     def send_raw_command(self, command_hex: str) -> Optional[Dict[str, Any]]:
         try:
@@ -226,12 +342,40 @@ class BafangUART:
         cached = self._get_cache('all_params')
         if cached:
             return cached
+
+        read_errors: Dict[str, Dict[str, str]] = {}
+        read_warnings: Dict[str, str] = {}
+
+        def safe_read(name: str, reader):
+            try:
+                parsed = reader()
+                if parsed is None:
+                    read_errors[name] = {
+                        'message': 'No response or unsupported payload format',
+                        'exception_type': 'ParseError',
+                    }
+                    self._log_parse_issue(name, read_errors[name]['message'])
+                elif isinstance(parsed, dict) and parsed.get('parse_warning'):
+                    read_warnings[name] = str(parsed.get('parse_warning'))
+                    self._log_parse_issue(name, read_warnings[name])
+                return parsed
+            except Exception as e:
+                logger.error(f"Failed to read {name}: {e}")
+                read_errors[name] = {
+                    'message': str(e),
+                    'exception_type': e.__class__.__name__,
+                }
+                self._log_parse_issue(name, read_errors[name]['message'])
+                return None
             
         result = {
             'device_info': self.device_info,
-            'basic': self.read_basic(),
-            'pedal': self.read_pedal(),
-            'throttle': self.read_throttle(),
+            'basic': safe_read('basic', self.read_basic),
+            'pedal': safe_read('pedal', self.read_pedal),
+            'throttle': safe_read('throttle', self.read_throttle),
+            'read_errors': read_errors,
+            'read_warnings': read_warnings,
+            'section_meta': self._section_meta,
         }
         self._set_cache('all_params', result)
         return result
@@ -247,12 +391,93 @@ class BafangUART:
         
         if not response:
             return None
+        self._last_read['basic'] = response
         
-        data = response[2:]
-        if len(data) < 25:
-            return None
-        data = data[:26]
-        temp_sensor_type_code = data[25] if len(data) > 25 else None
+        payload = response[2:]
+        if len(payload) < 24:
+            if len(payload) < 2:
+                return None
+            fallback_levels = [
+                {
+                    'level': i,
+                    'current_percent': 100,
+                    'speed_percent': 100,
+                }
+                for i in range(10)
+            ]
+            result = {
+                'low_battery_voltage': self._get_byte(payload, 0, 28),
+                'max_current': self._get_byte(payload, 1, 16),
+                'speed_limit': self._get_byte(payload, 2, 25),
+                'wheel_size_code': 4,
+                'wheel_size': '28"',
+                'wheel_circumference': 0,
+                'speedometer_type': 'Unknown',
+                'speedometer_signals': 0,
+                'assist_levels': fallback_levels,
+                'assist_level': 1,
+                'start_current': 20,
+                'start_current_decay': 10,
+                'stop_delay': 20,
+                'current_ramp': 15,
+                'throttle_enabled': True,
+                'throttle_start_voltage': 1100,
+                'throttle_end_voltage': 4200,
+                'temp_sensor_type_code': None,
+                'temp_sensor_supported': False,
+                'temp_sensor_type': 'Unavailable',
+                'raw_bytes': list(payload),
+                'protocol_variant': 'fallback',
+                'parse_warning': 'Short basic payload parsed with defaults',
+            }
+            self._set_section_meta('basic', 'fallback', result['parse_warning'])
+            self._set_cache('basic', result)
+            self._capture_initial('basic', self._basic_to_writable(result))
+            return result
+
+        if self._looks_like_openbafang_basic(payload):
+            speedmeter_raw = payload[23]
+            wheel_diameter = payload[22] / 2
+            temp_sensor_type_code = payload[24] if len(payload) > 24 else None
+            result = {
+                'low_battery_voltage': payload[0],
+                'max_current': payload[1],
+                'speed_limit': 25,
+                'wheel_size_code': self._wheel_size_code_from_diameter(wheel_diameter),
+                'wheel_size': f'{wheel_diameter:g}"',
+                'wheel_circumference': 0,
+                'speedometer_type_code': (speedmeter_raw & 0xC0) >> 6,
+                'speedometer_type': self._pick(["External", "Internal", "Motor phase"], (speedmeter_raw & 0xC0) >> 6),
+                'speedometer_signals': speedmeter_raw & 0x3F,
+                'assist_levels': [
+                    {
+                        'level': i,
+                        'current_percent': payload[2 + i],
+                        'speed_percent': payload[12 + i],
+                    }
+                    for i in range(10)
+                ],
+                'assist_level': 1,
+                'start_current': 20,
+                'start_current_decay': 10,
+                'stop_delay': 20,
+                'current_ramp': 15,
+                'throttle_enabled': True,
+                'throttle_start_voltage': 1100,
+                'throttle_end_voltage': 4200,
+                'temp_sensor_type_code': temp_sensor_type_code,
+                'temp_sensor_supported': temp_sensor_type_code is not None,
+                'temp_sensor_type': self._pick(["No sensor", "Controller only", "Motor only", "Both"], temp_sensor_type_code) if temp_sensor_type_code is not None else "Unavailable",
+                'raw_bytes': list(payload),
+                'protocol_variant': 'openbafang',
+            }
+            self._set_section_meta('basic', 'openbafang')
+            self._set_cache('basic', result)
+            self._capture_initial('basic', self._basic_to_writable(result))
+            return result
+
+        data = payload[:25]
+        temp_sensor_type_code = payload[25] if len(payload) > 25 else None
         
         result = {
             'low_battery_voltage': data[0] + 18,
@@ -261,6 +486,7 @@ class BafangUART:
             'wheel_size_code': data[3],
             'wheel_size': self._pick(["700C", "26\"(A)", "26\"(B)", "27.5\"", "28\"", "29\"", "16\"", "20\"", "24\"", "12\""], data[3]),
             'wheel_circumference': data[4],
+            'speedometer_type_code': data[5] & 0x03,
             'speedometer_type': self._pick(["External", "Internal", "Motor phase"], data[5] & 0x03),
             'speedometer_signals': (data[5] >> 2) & 0x0F,
             'assist_levels': [{'level': i, 'current_percent': data[i], 'speed_percent': data[i + 10]} for i in range(10)],
@@ -273,9 +499,12 @@ class BafangUART:
             'throttle_start_voltage': data[23] * 100,
             'throttle_end_voltage': data[24] * 100,
             'temp_sensor_type_code': temp_sensor_type_code,
+            'temp_sensor_supported': temp_sensor_type_code is not None,
             'temp_sensor_type': self._pick(["No sensor", "Controller only", "Motor only", "Both"], temp_sensor_type_code) if temp_sensor_type_code is not None else "Unavailable",
-            'raw_bytes': list(data)
+            'raw_bytes': list(payload),
+            'protocol_variant': 'native'
         }
+        self._set_section_meta('basic', 'native')
         self._set_cache('basic', result)
         self._capture_initial('basic', self._basic_to_writable(result))
         return result
@@ -289,10 +518,56 @@ class BafangUART:
         cmd = bytes([0x11, 0x53])
         response = self._send_with_retry(cmd, 0x53)
         
-        if not response or len(response) < 14:
+        if not response:
             return None
-        
-        data = response[2:14]
+        self._last_read['pedal'] = response
+
+        data = response[2:]
+        if len(data) < 11:
+            if len(data) < 3:
+                return None
+            result = {
+                'pedal_type': self._pick(["None", "DH-Sensor-12", "BB-Sensor-32", "DoubleSignal-24"], self._get_byte(data, 0, 3)),
+                'designated_assist': self._get_byte(data, 1, 0xFF),
+                'speed_limit': self._get_byte(data, 2, 0xFF),
+                'signal_number': self._get_byte(data, 5, 6),
+                'start_pulse': self._get_byte(data, 3, 0x14),
+                'torque_gain': self._get_byte(data, 4, 0x0A),
+                'torque_offset': self._get_byte(data, 7, 0x19),
+                'torque_step': self._get_byte(data, 8, 0x08),
+                'cadence_gain': self._get_byte(data, 9, 0x14),
+                'cadence_min': self._get_byte(data, 10, 0x14),
+                'cadence_max': self._get_byte(data, 10, 0x14),
+                'raw_bytes': list(data),
+                'protocol_variant': 'fallback',
+                'parse_warning': 'Short pedal payload parsed with defaults',
+            }
+            self._set_section_meta('pedal', 'fallback', result['parse_warning'])
+            self._set_cache('pedal', result)
+            self._capture_initial('pedal', self._pedal_to_writable(result))
+            return result
+
+        if len(data) == 11:
+            result = {
+                'pedal_type': self._pick(["None", "DH-Sensor-12", "BB-Sensor-32", "DoubleSignal-24"], data[0]),
+                'designated_assist': data[1],
+                'speed_limit': data[2],
+                'start_current': data[3],
+                'slow_start_mode': data[4],
+                'signal_number': data[5],
+                'stop_delay': data[7] * 10,
+                'current_decay': data[8],
+                'stop_decay': data[9] * 10,
+                'keep_current': data[10],
+                'raw_bytes': list(data),
+                'protocol_variant': 'openbafang'
+            }
+            self._set_section_meta('pedal', 'openbafang')
+            self._set_cache('pedal', result)
+            self._capture_initial('pedal', self._pedal_to_writable(result))
+            return result
+
+        data = data[:12]
         result = {
             'pedal_type': self._pick(["None", "DH-Sensor-12", "BB-Sensor-32", "DoubleSignal-24"], data[0]),
             'designated_assist': data[1],
@@ -306,8 +581,10 @@ class BafangUART:
             'cadence_gain': data[9],
             'cadence_min': data[10],
             'cadence_max': data[11],
-            'raw_bytes': list(data)
+            'raw_bytes': list(data),
+            'protocol_variant': 'native'
         }
+        self._set_section_meta('pedal', 'native')
         self._set_cache('pedal', result)
         self._capture_initial('pedal', self._pedal_to_writable(result))
         return result
@@ -323,10 +600,46 @@ class BafangUART:
         
         if not response:
             return None
+        self._last_read['throttle'] = response
         
         data = response[2:]
         if len(data) < 5:
-            return None
+            if len(data) < 2:
+                return None
+            result = {
+                'start_voltage': self._get_byte(data, 0, 11) * 100,
+                'end_voltage': self._get_byte(data, 1, 42) * 100,
+                'start_current': self._get_byte(data, 2, 0x0B),
+                'mode': self._get_byte(data, 3, 0x23),
+                'enabled': bool(self._get_byte(data, 4, 1)),
+                'start_percent': None,
+                'raw_bytes': list(data),
+                'protocol_variant': 'fallback',
+                'parse_warning': 'Short throttle payload parsed with defaults',
+            }
+            self._set_section_meta('throttle', 'fallback', result['parse_warning'])
+            self._set_cache('throttle', result)
+            self._capture_initial('throttle', self._throttle_to_writable(result))
+            return result
+
+        if len(data) >= 6 and data[2] in (0, 1) and data[3] in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 255):
+            result = {
+                'start_voltage': data[0] * 100,
+                'end_voltage': data[1] * 100,
+                'start_current': data[5],
+                'mode': data[2],
+                'enabled': True,
+                'assist_level': data[3],
+                'speed_limit': data[4],
+                'start_percent': None,
+                'raw_bytes': list(data),
+                'protocol_variant': 'openbafang'
+            }
+            self._set_section_meta('throttle', 'openbafang')
+            self._set_cache('throttle', result)
+            self._capture_initial('throttle', self._throttle_to_writable(result))
+            return result
+
         start_percent = data[5] if len(data) > 5 else None
         result = {
             'start_voltage': data[0] * 100,
@@ -335,8 +648,10 @@ class BafangUART:
             'mode': data[3],
             'enabled': data[4] == 0x01,
             'start_percent': start_percent,
-            'raw_bytes': list(data)
+            'raw_bytes': list(data),
+            'protocol_variant': 'native'
         }
+        self._set_section_meta('throttle', 'native')
         self._set_cache('throttle', result)
         self._capture_initial('throttle', self._throttle_to_writable(result))
         return result
@@ -399,31 +714,53 @@ class BafangUART:
         }
 
     def _build_basic_command(self, params: Dict[str, Any]) -> bytes:
+        variant = self._section_meta.get('basic', {}).get('variant', 'native')
+        if variant == 'fallback':
+            raise ValueError('Write blocked in fallback basic variant')
+        if variant == 'openbafang':
+            cmd = bytes([0x16, 0x52, 0x18])
+            cmd += bytes([
+                self._clamp(params.get('low_battery_voltage', 28), 1, 60, 28),
+                self._clamp(params.get('max_current', 16), 1, 100, 16),
+            ])
+            for i in range(10):
+                cmd += bytes([self._clamp(params.get(f'assist_current_{i}', 100), 0, 100, 100)])
+            for i in range(10):
+                cmd += bytes([self._clamp(params.get(f'assist_speed_{i}', 100), 0, 100, 100)])
+            wheel_diameter = self._wheel_diameter_from_code(self._clamp(params.get('wheel_size_code', 4), 0, 9, 4))
+            speedometer_type = self._clamp(params.get('speedometer_type_code', 0), 0, 2, 0)
+            magnets = self._clamp(params.get('speedometer_signals', 1), 1, 32, 1)
+            cmd += bytes([
+                int(wheel_diameter * 2),
+                ((speedometer_type & 0x03) << 6) | (magnets & 0x3F),
+            ])
+            return cmd + bytes([self._calculate_checksum(cmd)])
+
         cmd = bytes([0x16, 0x52, 0x24])
         cmd += bytes([
-            params.get('low_battery_voltage', 28) - 18,
-            params.get('max_current', 16),
-            params.get('speed_limit', 25),
-            params.get('wheel_size_code', params.get('wheel_size', 4)),
-            params.get('wheel_circumference', 0)
+            self._clamp(params.get('low_battery_voltage', 28), 18, 60, 28) - 18,
+            self._clamp(params.get('max_current', 16), 1, 100, 16),
+            self._clamp(params.get('speed_limit', 25), 1, 100, 25),
+            self._clamp(params.get('wheel_size_code', params.get('wheel_size', 4)), 0, 9, 4),
+            self._clamp(params.get('wheel_circumference', 0), 0, 255, 0)
         ])
         
         for i in range(10):
             cmd += bytes([
-                params.get(f'assist_current_{i}', 100),
-                params.get(f'assist_speed_{i}', 100)
+                self._clamp(params.get(f'assist_current_{i}', 100), 0, 100, 100),
+                self._clamp(params.get(f'assist_speed_{i}', 100), 0, 100, 100)
             ])
         
         cmd += bytes([
-            params.get('assist_level', 1),
-            params.get('start_current', 20),
-            params.get('start_current_decay', 10),
-            params.get('stop_delay', 20),
-            params.get('current_ramp', 15),
+            self._clamp(params.get('assist_level', 1), 0, 9, 1),
+            self._clamp(params.get('start_current', 20), 0, 100, 20),
+            self._clamp(params.get('start_current_decay', 10), 0, 255, 10),
+            self._clamp(params.get('stop_delay', 20), 0, 255, 20),
+            self._clamp(params.get('current_ramp', 15), 0, 255, 15),
             0x01 if params.get('throttle_enabled', True) else 0x00,
-            params.get('throttle_start_voltage', 1100) // 100,
-            params.get('throttle_end_voltage', 4200) // 100,
-            params.get('temp_sensor_type', 3),
+            self._clamp(params.get('throttle_start_voltage', 1100) // 100, 0, 255, 11),
+            self._clamp(params.get('throttle_end_voltage', 4200) // 100, 0, 255, 42),
+            self._clamp(params.get('temp_sensor_type', 3), 0, 3, 3),
             0x00
         ])
         
@@ -431,33 +768,66 @@ class BafangUART:
 
     def _build_pedal_command(self, params: Dict[str, Any]) -> bytes:
         pedal_types = {'None': 0, 'DH-Sensor-12': 1, 'BB-Sensor-32': 2, 'DoubleSignal-24': 3}
+        if self._section_meta.get('pedal', {}).get('variant') == 'fallback':
+            raise ValueError('Write blocked in fallback pedal variant')
+
+        if self._section_meta.get('pedal', {}).get('variant') == 'openbafang':
+            cmd = bytes([0x16, 0x53, 0x0B])
+            cmd += bytes([pedal_types.get(params.get('pedal_type', 'DoubleSignal-24'), 3)])
+            cmd += bytes([
+                self._clamp(params.get('designated_assist', 0xFF), 0, 255, 0xFF),
+                self._clamp(params.get('speed_limit', 0xFF), 0, 255, 0xFF),
+                self._clamp(params.get('start_pulse', params.get('start_current', 0x14)), 0, 255, 0x14),
+                self._clamp(params.get('torque_gain', params.get('slow_start_mode', 0x0A)), 0, 255, 0x0A),
+                self._clamp(params.get('signal_number', 0x06), 0, 255, 0x06),
+                0x0A,
+                self._clamp(params.get('torque_offset', params.get('stop_delay', 0x19)), 0, 255, 0x19),
+                self._clamp(params.get('torque_step', params.get('current_decay', 0x08)), 0, 255, 0x08),
+                self._clamp(params.get('cadence_gain', params.get('stop_decay', 0x14)), 0, 255, 0x14),
+                self._clamp(params.get('cadence_min', params.get('keep_current', 0x14)), 0, 255, 0x14),
+            ])
+            return cmd + bytes([self._calculate_checksum(cmd)])
         
         cmd = bytes([0x16, 0x53, 0x0B])
         cmd += bytes([pedal_types.get(params.get('pedal_type', 'DoubleSignal-24'), 3)])
-        cmd += bytes([params.get('designated_assist', 0xFF)])
+        cmd += bytes([self._clamp(params.get('designated_assist', 0xFF), 0, 255, 0xFF)])
         cmd += bytes([
-            params.get('speed_limit', 0xFF),
-            params.get('circumference', 0x00),
-            params.get('signal_number', 0x06),
-            params.get('start_pulse', 0x14),
-            params.get('torque_gain', 0x0A),
-            params.get('torque_offset', 0x19),
-            params.get('torque_step', 0x08),
-            params.get('cadence_gain', 0x14),
-            params.get('cadence_min', 0x14),
-            params.get('cadence_max', 0x14)
+            self._clamp(params.get('speed_limit', 0xFF), 0, 255, 0xFF),
+            self._clamp(params.get('circumference', 0x00), 0, 255, 0x00),
+            self._clamp(params.get('signal_number', 0x06), 0, 255, 0x06),
+            self._clamp(params.get('start_pulse', 0x14), 0, 255, 0x14),
+            self._clamp(params.get('torque_gain', 0x0A), 0, 255, 0x0A),
+            self._clamp(params.get('torque_offset', 0x19), 0, 255, 0x19),
+            self._clamp(params.get('torque_step', 0x08), 0, 255, 0x08),
+            self._clamp(params.get('cadence_gain', 0x14), 0, 255, 0x14),
+            self._clamp(params.get('cadence_min', 0x14), 0, 255, 0x14),
+            self._clamp(params.get('cadence_max', 0x14), 0, 255, 0x14)
         ])
         
         return cmd + bytes([self._calculate_checksum(cmd)])
 
     def _build_throttle_command(self, params: Dict[str, Any]) -> bytes:
+        if self._section_meta.get('throttle', {}).get('variant') == 'fallback':
+            raise ValueError('Write blocked in fallback throttle variant')
+        if self._section_meta.get('throttle', {}).get('variant') == 'openbafang':
+            cmd = bytes([0x16, 0x54, 0x06])
+            cmd += bytes([
+                self._clamp(params.get('start_voltage', 1100) // 100, 0, 255, 11),
+                self._clamp(params.get('end_voltage', 4200) // 100, 0, 255, 42),
+                self._clamp(params.get('mode', 0), 0, 1, 0),
+                self._clamp(params.get('assist_level', params.get('designated_assist', 0xFF)), 0, 255, 0xFF),
+                self._clamp(params.get('speed_limit', 0xFF), 0, 255, 0xFF),
+                self._clamp(params.get('start_current', 0x0B), 0, 255, 0x0B),
+            ])
+            return cmd + bytes([self._calculate_checksum(cmd)])
+
         cmd = bytes([0x16, 0x54, 0x06])
         cmd += bytes([
-            params.get('start_voltage', 1100) // 100,
-            params.get('end_voltage', 4200) // 100,
-            params.get('start_current', 0x0B),
-            params.get('mode', 0x23),
-            params.get('enabled', 0x00)
+            self._clamp(params.get('start_voltage', 1100) // 100, 0, 255, 11),
+            self._clamp(params.get('end_voltage', 4200) // 100, 0, 255, 42),
+            self._clamp(params.get('start_current', 0x0B), 0, 255, 0x0B),
+            self._clamp(params.get('mode', 0x23), 0, 255, 0x23),
+            self._clamp(params.get('enabled', 0x00), 0, 1, 0x00)
         ])
         
         return cmd + bytes([self._calculate_checksum(cmd)])
@@ -465,6 +835,10 @@ class BafangUART:
     def write_basic(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if 'basic' not in self._initial_snapshot:
             return {'success': False, 'error': 'Nejprve načtěte controller (Read).', 'code': None}
+
+        guard = self._section_write_guard('basic')
+        if guard is not None:
+            return guard
 
         changed = self._changed_only('basic', params)
         if not changed:
@@ -480,7 +854,9 @@ class BafangUART:
         
         result_code = response[1] if len(response) > 1 else None
         
-        if result_code == 0x24:
+        variant = self._section_meta.get('basic', {}).get('variant', 'native')
+        expected_ok = 0x18 if variant == 'openbafang' else 0x24
+        if result_code == expected_ok:
             self._cache.pop('basic', None)
             self._initial_snapshot['basic'].update(changed)
             return {'success': True, 'error': None, 'code': result_code}
@@ -525,6 +901,10 @@ class BafangUART:
         if 'pedal' not in self._initial_snapshot:
             return {'success': False, 'error': 'Nejprve načtěte controller (Read).', 'code': None}
 
+        guard = self._section_write_guard('pedal')
+        if guard is not None:
+            return guard
+
         changed = self._changed_only('pedal', params)
         if not changed:
             return {'success': True, 'error': None, 'code': None, 'skipped': True, 'message': 'Žádné změněné parametry.'}
@@ -568,6 +948,10 @@ class BafangUART:
     def write_throttle(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if 'throttle' not in self._initial_snapshot:
             return {'success': False, 'error': 'Nejprve načtěte controller (Read).', 'code': None}
+
+        guard = self._section_write_guard('throttle')
+        if guard is not None:
+            return guard
 
         changed = self._changed_only('throttle', params)
         if not changed:
@@ -710,7 +1094,7 @@ class BafangUART:
     def torque_calibration(self) -> bool:
         cmd = bytes([0x16, 0xA0, 0x01, 0x01, self._calculate_checksum(bytes([0x16, 0xA0, 0x01, 0x01]))])
         response = self._send_command(cmd)
-        return response is not None and response[1] == 0x01
+        return response is not None and len(response) > 1 and response[1] == 0x01
 
     def set_wheel_circumference(self, circumference_mm: int) -> bool:
         cmd = bytes([0x16, 0x52, 0x01, 0x06, circumference_mm & 0xFF, self._calculate_checksum(bytes([0x16, 0x52, 0x01, 0x06, circumference_mm & 0xFF]))])

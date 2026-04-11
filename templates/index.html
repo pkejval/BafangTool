@@ -521,7 +521,7 @@
             
             <div class="actions">
                 <button onclick="readParams()">Načíst</button>
-                <button onclick="writeBasic()">Zapsat</button>
+                <button id="writeBasicBtn" onclick="writeBasic()">Zapsat</button>
             </div>
         </div>
         
@@ -581,7 +581,7 @@
             </div>
             <div class="actions">
                 <button onclick="readParams()">Načíst</button>
-                <button onclick="writePedal()">Zapsat</button>
+                <button id="writePedalBtn" onclick="writePedal()">Zapsat</button>
             </div>
         </div>
         
@@ -617,7 +617,7 @@
             </div>
             <div class="actions">
                 <button onclick="readParams()">Načíst</button>
-                <button onclick="writeThrottle()">Zapsat</button>
+                <button id="writeThrottleBtn" onclick="writeThrottle()">Zapsat</button>
             </div>
         </div>
         
@@ -680,7 +680,7 @@
                         <option value="">-- Vyberte --</option>
                     </select>
                     <button onclick="loadSelectedProfile()" style="margin-top: 6px;">Načíst</button>
-                    <button onclick="applySelectedProfile()" class="secondary" style="margin-top: 4px;">Nahrát do controlleru</button>
+                    <button id="applySelectedProfileBtn" onclick="applySelectedProfile()" class="secondary" style="margin-top: 4px;">Nahrát do controlleru</button>
                 </div>
             </div>
             <h4 style="margin-top: 12px; color: #00d4ff; font-size: 12px;">Uložené profily</h4>
@@ -750,6 +750,7 @@
 
     <script>
         let isConnected = false;
+        let writeSafety = { basic: false, pedal: false, throttle: false };
         const isCzech = (navigator.language || 'en').toLowerCase().startsWith('cs');
 
         const I18N_MAP = {
@@ -834,6 +835,47 @@
             return I18N_MAP[value] || value;
         }
 
+        function formatApiError(data, fallbackMessage) {
+            if (!data || typeof data !== 'object') return fallbackMessage;
+            const message = data.error || data.message || fallbackMessage;
+            if (data.exception_type) return `${message} (${data.exception_type})`;
+            return message;
+        }
+
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = async (...args) => {
+            const requestUrl = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+            try {
+                const response = await originalFetch(...args);
+                if (requestUrl.startsWith('/api/')) {
+                    const contentType = response.headers.get('content-type') || '';
+                    if (contentType.includes('application/json')) {
+                        const preview = await response.clone().json().catch(() => null);
+                        if (!response.ok) {
+                            showModal('Chyba', formatApiError(preview, `HTTP ${response.status}`), 'error');
+                        }
+                    } else if (!response.ok) {
+                        showModal('Chyba', `HTTP ${response.status}`, 'error');
+                    }
+                }
+                return response;
+            } catch (err) {
+                showModal('Chyba', err?.message || 'Network error', 'error');
+                throw err;
+            }
+        };
+
+        window.addEventListener('error', (event) => {
+            const msg = event?.error?.message || event?.message || 'Neznámá chyba';
+            showModal('Chyba', msg, 'error');
+        });
+
+        window.addEventListener('unhandledrejection', (event) => {
+            const reason = event?.reason;
+            const msg = reason?.message || String(reason || 'Nezachycená chyba');
+            showModal('Chyba', msg, 'error');
+        });
+
         function localizeDOM() {
             if (isCzech) return;
             const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -854,6 +896,30 @@
                 if (I18N_MAP[p]) el.setAttribute('placeholder', I18N_MAP[p]);
             });
         }
+
+        function updateWriteButtonsState() {
+            const writeBasicBtn = document.getElementById('writeBasicBtn');
+            const writePedalBtn = document.getElementById('writePedalBtn');
+            const writeThrottleBtn = document.getElementById('writeThrottleBtn');
+            const applySelectedProfileBtn = document.getElementById('applySelectedProfileBtn');
+            if (writeBasicBtn) writeBasicBtn.disabled = !isConnected || !writeSafety.basic;
+            if (writePedalBtn) writePedalBtn.disabled = !isConnected || !writeSafety.pedal;
+            if (writeThrottleBtn) writeThrottleBtn.disabled = !isConnected || !writeSafety.throttle;
+            if (applySelectedProfileBtn) applySelectedProfileBtn.disabled = !isConnected || !(writeSafety.basic && writeSafety.pedal && writeSafety.throttle);
+        }
+
+        function updateWriteSafetyFromRead(data) {
+            const sectionMeta = (data && data.section_meta) || {};
+            const basicMeta = sectionMeta.basic || {};
+            const pedalMeta = sectionMeta.pedal || {};
+            const throttleMeta = sectionMeta.throttle || {};
+            writeSafety = {
+                basic: !!basicMeta.safe_to_write,
+                pedal: !!pedalMeta.safe_to_write,
+                throttle: !!throttleMeta.safe_to_write,
+            };
+            updateWriteButtonsState();
+        }
         
         function init() {
             localizeDOM();
@@ -861,6 +927,7 @@
             generateAssistLevels();
             refreshProfilesList();
             updateConnectionUI(false);
+            updateWriteButtonsState();
         }
         
         function generateAssistLevels() {
@@ -955,9 +1022,11 @@
             } else {
                 connectView.style.display = 'block';
                 connectedView.style.display = 'none';
+                writeSafety = { basic: false, pedal: false, throttle: false };
             }
             
             setContentEnabled(connected);
+            updateWriteButtonsState();
         }
         
         function setContentEnabled(enabled) {
@@ -990,6 +1059,7 @@
                 .then(res => res.json())
                 .then(data => {
                     closeModal();
+                    updateWriteSafetyFromRead(data);
                     if (data.basic) {
                         document.getElementById('basic_low_battery_voltage').value = data.basic.low_battery_voltage;
                         document.getElementById('basic_max_current').value = data.basic.max_current;
@@ -1028,6 +1098,20 @@
                         document.getElementById('throttle_start_current').value = data.throttle.start_current;
                         document.getElementById('throttle_mode').value = data.throttle.mode;
                         document.getElementById('throttle_enabled').checked = data.throttle.enabled;
+                    }
+                    if (data.read_errors && Object.keys(data.read_errors).length > 0) {
+                        const detail = Object.entries(data.read_errors)
+                            .map(([section, info]) => `${section}: ${formatApiError(info, 'unknown error')}`)
+                            .join(' | ');
+                        showModal('Chyba', detail, 'error');
+                        return;
+                    }
+                    if (data.read_warnings && Object.keys(data.read_warnings).length > 0) {
+                        const detail = Object.entries(data.read_warnings)
+                            .map(([section, msg]) => `${section}: ${msg}`)
+                            .join(' | ');
+                        showModal('Varování', `${detail}. Zápis je preventivně zablokován.`, 'error');
+                        return;
                     }
                     showModal('Úspěch', 'Nastavení načteno', 'success');
                 });

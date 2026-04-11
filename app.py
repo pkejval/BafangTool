@@ -4,6 +4,7 @@ import json
 import hashlib
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
+from werkzeug.exceptions import HTTPException
 from bafang.protocol import BafangUART
 
 logging.basicConfig(level=logging.INFO)
@@ -14,6 +15,29 @@ app.secret_key = 'bafang-tool-secret-key'
 
 PROFILES_FILE = 'profiles.json'
 controller = None
+
+
+def _api_error_response(message: str, status_code: int, exception_type: str | None = None):
+    payload = {'success': False, 'error': message}
+    if exception_type:
+        payload['exception_type'] = exception_type
+    return jsonify(payload), status_code
+
+
+@app.errorhandler(HTTPException)
+def handle_http_exception(e: HTTPException):
+    if request.path.startswith('/api/'):
+        description = str(e.description) if e.description is not None else str(e)
+        return _api_error_response(description, e.code or 500, e.__class__.__name__)
+    return e
+
+
+@app.errorhandler(Exception)
+def handle_unhandled_exception(e: Exception):
+    logger.exception('Unhandled exception in request')
+    if request.path.startswith('/api/'):
+        return _api_error_response(str(e), 500, e.__class__.__name__)
+    return jsonify({'error': 'Internal server error'}), 500
 
 def get_available_ports():
     import serial.tools.list_ports
