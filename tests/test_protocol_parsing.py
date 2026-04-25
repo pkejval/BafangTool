@@ -15,9 +15,9 @@ def test_read_basic_without_optional_temp_sensor_byte():
     data = uart.read_basic(use_cache=False)
 
     assert data is not None
-    assert data["temp_sensor_type_code"] is None
-    assert data["temp_sensor_type"] == "Unavailable"
-    assert len(data["raw_bytes"]) == 25
+    assert data.temp_sensor_type_code is None
+    assert data.temp_sensor_type == "Unavailable"
+    assert len(data.raw_bytes) == 25
 
 
 def test_read_basic_with_temp_sensor_byte_present():
@@ -28,9 +28,49 @@ def test_read_basic_with_temp_sensor_byte_present():
     data = uart.read_basic(use_cache=False)
 
     assert data is not None
-    assert data["temp_sensor_type_code"] == 2
-    assert data["temp_sensor_type"] == "Motor only"
-    assert len(data["raw_bytes"]) == 26
+    assert data.temp_sensor_type_code == 2
+    assert data.temp_sensor_type == "Motor only"
+    assert len(data.raw_bytes) == 26
+
+
+def test_read_basic_incomplete_native_payload_falls_back_without_index_error():
+    payload = bytes([
+        10,
+        16,
+        25,
+        4,
+        0,
+        0,
+        10,
+        20,
+        30,
+        40,
+        50,
+        60,
+        70,
+        80,
+        90,
+        101,
+        100,
+        1,
+        20,
+        10,
+        20,
+        15,
+        1,
+        11,
+    ])
+    response = bytes([0x52, 0x00]) + payload
+    uart = _uart_with_response(response)
+
+    data = uart.read_basic(use_cache=False)
+
+    assert data is not None
+    assert data.protocol_variant == "fallback"
+    assert data.temp_sensor_type_code is None
+    assert data.throttle_start_voltage == 1100
+    assert data.throttle_end_voltage == 4200
+    assert uart._section_meta["basic"]["safe_to_write"] is False
 
 
 def test_read_throttle_with_optional_start_percent():
@@ -41,7 +81,7 @@ def test_read_throttle_with_optional_start_percent():
     data = uart.read_throttle(use_cache=False)
 
     assert data is not None
-    assert data["start_voltage"] == 1100
-    assert data["end_voltage"] == 4200
-    assert data["enabled"] is True
-    assert data["start_percent"] == 88
+    assert data.start_voltage == 1100
+    assert data.end_voltage == 4200
+    assert data.enabled is True
+    assert data.start_percent == 88

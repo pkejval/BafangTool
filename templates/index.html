@@ -422,6 +422,8 @@
             <button class="tab active" onclick="switchTab('basic')">Základní</button>
             <button class="tab" onclick="switchTab('pedal')">Pedály</button>
             <button class="tab" onclick="switchTab('throttle')">Plyn</button>
+            <button class="tab" onclick="switchTab('live_data')">Live data</button>
+            <button class="tab" onclick="switchTab('errors')">Chyby</button>
             <button class="tab" onclick="switchTab('raw')">Raw</button>
             <button class="tab" onclick="switchTab('experimental')">Exp.</button>
             <button class="tab" onclick="switchTab('profiles')">Profily</button>
@@ -620,7 +622,89 @@
                 <button id="writeThrottleBtn" onclick="writeThrottle()">Zapsat</button>
             </div>
         </div>
-        
+
+        <div id="live_data" class="tab-content">
+            <h3>Live data</h3>
+            <div class="param-grid">
+                <div class="param-group">
+                    <div class="param-item">
+                        <label>Rychlost kola (km/h)</label>
+                        <input type="text" id="live_wheel_speed" readonly>
+                    </div>
+                    <div class="param-item">
+                        <label>Otáčky motoru (RPM)</label>
+                        <input type="text" id="live_motor_rpm" readonly>
+                    </div>
+                    <div class="param-item">
+                        <label>Napětí baterie (V)</label>
+                        <input type="text" id="live_battery_voltage" readonly>
+                    </div>
+                    <div class="param-item">
+                        <label>Proud baterie (A)</label>
+                        <input type="text" id="live_battery_current" readonly>
+                    </div>
+                </div>
+                <div class="param-group">
+                    <div class="param-item">
+                        <label>Proud motoru (A)</label>
+                        <input type="text" id="live_motor_current" readonly>
+                    </div>
+                    <div class="param-item">
+                        <label>Teplota řídící (°C)</label>
+                        <input type="text" id="live_controller_temp" readonly>
+                    </div>
+                    <div class="param-item">
+                        <label>Teplota motoru (°C)</label>
+                        <input type="text" id="live_motor_temp" readonly>
+                    </div>
+                    <div class="param-item">
+                        <label>Torque sensor</label>
+                        <input type="text" id="live_torque_sensor" readonly>
+                    </div>
+                </div>
+                <div class="param-group">
+                    <div class="param-item">
+                        <label>Kadence</label>
+                        <input type="text" id="live_cadence" readonly>
+                    </div>
+                    <div class="param-item">
+                        <label>Úroveň asistence</label>
+                        <input type="text" id="live_assistant_level" readonly>
+                    </div>
+                </div>
+            </div>
+            <div class="actions">
+                <button onclick="readParams()">Načíst</button>
+            </div>
+        </div>
+
+        <div id="errors" class="tab-content">
+            <h3>Chybové kódy</h3>
+            <div class="param-grid">
+                <div class="param-group">
+                    <div class="param-item">
+                        <label>Stav systému</label>
+                        <input type="text" id="error_system_status" readonly>
+                    </div>
+                    <div class="param-item">
+                        <label>Kód chyby</label>
+                        <input type="text" id="error_error_code" readonly>
+                    </div>
+                    <div class="param-item">
+                        <label>FW řídící</label>
+                        <input type="text" id="error_controller_fw" readonly>
+                    </div>
+                    <div class="param-item">
+                        <label>FW motoru</label>
+                        <input type="text" id="error_motor_fw" readonly>
+                    </div>
+                </div>
+            </div>
+            <div class="actions">
+                <button onclick="readParams()">Načíst</button>
+            </div>
+        </div>
+
         <div id="raw" class="tab-content">
             <h3>Raw data</h3>
             <div class="param-grid">
@@ -1041,8 +1125,8 @@
                 disabledMsg.style.display = 'block';
             }
             
-            const inputs = document.querySelectorAll('input, select, button:not(#portSelect):not([onclick*="connect"]):not([onclick*="refreshPorts"]):not([onclick*="disconnect"]))');
-            inputs.forEach(el => el.disabled = !enabled);
+            const contentControls = mainContent.querySelectorAll('input, select, button');
+            contentControls.forEach(el => el.disabled = !enabled);
             
             document.querySelectorAll('.tab').forEach(tab => {
                 if (tab.getAttribute('onclick') !== "switchTab('system')") {
@@ -1050,6 +1134,11 @@
                     tab.style.opacity = enabled ? '1' : '0.5';
                 }
             });
+
+            document.getElementById('portSelect').disabled = enabled;
+            document.querySelector('#connectView button[onclick="connect()"]')?.removeAttribute('disabled');
+            document.querySelector('#connectView button[onclick="refreshPorts()"]')?.removeAttribute('disabled');
+            document.querySelector('#connectedView button[onclick="disconnect()"]')?.removeAttribute('disabled');
         }
         
         function readParams() {
@@ -1098,6 +1187,24 @@
                         document.getElementById('throttle_start_current').value = data.throttle.start_current;
                         document.getElementById('throttle_mode').value = data.throttle.mode;
                         document.getElementById('throttle_enabled').checked = data.throttle.enabled;
+                    }
+                    if (data.live_data) {
+                        document.getElementById('live_wheel_speed').value = data.live_data.wheel_speed;
+                        document.getElementById('live_motor_rpm').value = data.live_data.motor_rpm;
+                        document.getElementById('live_battery_voltage').value = data.live_data.battery_voltage;
+                        document.getElementById('live_battery_current').value = data.live_data.battery_current;
+                        document.getElementById('live_motor_current').value = data.live_data.motor_current;
+                        document.getElementById('live_controller_temp').value = data.live_data.controller_temp;
+                        document.getElementById('live_motor_temp').value = data.live_data.motor_temp;
+                        document.getElementById('live_torque_sensor').value = data.live_data.torque_sensor;
+                        document.getElementById('live_cadence').value = data.live_data.cadence;
+                        document.getElementById('live_assistant_level').value = data.live_data.assistant_level;
+                    }
+                    if (data.errors) {
+                        document.getElementById('error_system_status').value = data.errors.system_status;
+                        document.getElementById('error_error_code').value = data.errors.error_code;
+                        document.getElementById('error_controller_fw').value = data.errors.controller_fw;
+                        document.getElementById('error_motor_fw').value = data.errors.motor_fw;
                     }
                     if (data.read_errors && Object.keys(data.read_errors).length > 0) {
                         const detail = Object.entries(data.read_errors)
