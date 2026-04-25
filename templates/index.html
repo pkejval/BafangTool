@@ -16,22 +16,22 @@
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
             min-height: 100vh;
             color: #eee;
-            font-size: 13px;
+            font-size: 12px;
         }
-        
+
         .container {
-            max-width: 1000px;
+            max-width: 1400px;
             margin: 0 auto;
-            padding: 15px;
+            padding: 10px;
         }
         
         header {
             text-align: center;
-            padding: 20px 0;
+            padding: 15px 0;
         }
         
         header h1 {
-            font-size: 1.8rem;
+            font-size: 1.5rem;
             background: linear-gradient(90deg, #00d4ff, #7b2ff7);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -44,15 +44,74 @@
             font-size: 12px;
         }
         
+        .hamburger-btn {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid #333;
+            border-radius: 4px;
+            width: 40px;
+            height: 32px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 3px;
+            z-index: 1000;
+        }
+
+        .hamburger-btn span {
+            width: 20px;
+            height: 2px;
+            background: #00d4ff;
+            transition: 0.3s;
+        }
+
         .connection-panel {
             background: rgba(255, 255, 255, 0.03);
             border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 15px;
+            padding: 10px;
+            margin-bottom: 10px;
+            max-height: 200px;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+
+        .connection-panel.collapsed {
+            max-height: 0;
+            padding: 0 10px;
+            margin-bottom: 0;
+            border-width: 0;
+        }
+
+        .connection-panel.compact {
+            position: fixed;
+            top: 55px;
+            right: 15px;
+            width: min(520px, calc(100vw - 30px));
+            z-index: 999;
+            background: rgba(18, 20, 36, 0.98);
+            border: 1px solid #333;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+        }
+
+        .connection-panel.compact.collapsed {
+            width: 0;
+            max-height: 0;
+            padding: 0;
+            border: 0;
+            overflow: hidden;
+        }
+
+        .hamburger-btn.active {
+            border-color: #00d4ff;
+            box-shadow: 0 0 12px rgba(0, 212, 255, 0.25);
         }
         
         .connection-panel h2 {
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             color: #00d4ff;
             font-size: 14px;
         }
@@ -65,12 +124,13 @@
         }
         
         select, button, input {
-            padding: 8px 12px;
-            border-radius: 6px;
+            padding: 6px 10px;
+            border-radius: 4px;
             border: 1px solid #333;
             background: #222;
             color: #fff;
-            font-size: 12px;
+            font-size: 11px;
+            height: 28px;
         }
         
         select {
@@ -83,8 +143,9 @@
             border: none;
             cursor: pointer;
             font-weight: 600;
-            font-size: 12px;
-            padding: 8px 14px;
+            font-size: 11px;
+            padding: 6px 12px;
+            height: 32px;
         }
         
         button:hover {
@@ -100,35 +161,23 @@
             background: linear-gradient(90deg, #ff4757, #ff6b81);
         }
         
-        .connected-info {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            flex-wrap: wrap;
-        }
-        
-        .connected-info .connected-port span:last-child,
-        .connected-info .connected-device span:last-child {
+        .connected-device span:last-child {
             color: #00d4ff;
             font-weight: 600;
         }
-        
-        .connected-info .status-badge {
+
+        .status-badge {
             padding: 4px 10px;
             border-radius: 4px;
             font-weight: 600;
             font-size: 11px;
         }
-        
-        .connected-info .status-badge.connected {
+
+        .status-badge.connected {
             background: rgba(46, 204, 113, 0.2);
             color: #2ecc71;
         }
-        
-        .connected-info button {
-            margin-left: auto;
-        }
-        
+
         .tabs {
             display: flex;
             gap: 4px;
@@ -139,13 +188,13 @@
         }
         
         .tab {
-            padding: 8px 16px;
+            padding: 6px 12px;
             background: transparent;
             border: none;
             color: #888;
             cursor: pointer;
             border-radius: 4px;
-            font-size: 12px;
+            font-size: 11px;
             transition: all 0.2s;
         }
         
@@ -167,19 +216,19 @@
         
         .tab-content h3 {
             color: #00d4ff;
-            margin-bottom: 12px;
-            font-size: 14px;
+            margin-bottom: 8px;
+            font-size: 12px;
         }
         
         .param-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 12px;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 8px;
         }
-        
+
         .param-group {
             background: rgba(0, 0, 0, 0.2);
-            padding: 12px;
+            padding: 8px;
             border-radius: 6px;
         }
         
@@ -192,7 +241,7 @@
         }
         
         .param-item {
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }
         
         .param-item label {
@@ -213,12 +262,6 @@
             padding: 10px;
             border-radius: 6px;
             margin-top: 12px;
-        }
-        
-        .assist-levels h4 {
-            color: #7b2ff7;
-            margin-bottom: 8px;
-            font-size: 12px;
         }
         
         .assist-level {
@@ -245,10 +288,38 @@
         
         .actions {
             display: flex;
-            gap: 10px;
-            margin-top: 15px;
-            padding-top: 12px;
+            gap: 8px;
+            margin-top: 10px;
+            padding-top: 8px;
             border-top: 1px solid #333;
+        }
+
+        details {
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 8px;
+            margin-bottom: 8px;
+            background: rgba(0, 0, 0, 0.1);
+        }
+
+        details summary {
+            list-style: none;
+            user-select: none;
+        }
+
+        details summary::-webkit-details-marker {
+            display: none;
+        }
+
+        details summary::after {
+            content: ' ▼';
+            float: right;
+            font-size: 10px;
+            color: #7b2ff7;
+        }
+
+        details[open] summary::after {
+            content: ' ▲';
         }
         
         .actions button {
@@ -345,36 +416,6 @@
             margin-top: 12px;
         }
         
-        .device-info {
-            background: rgba(0, 0, 0, 0.2);
-            padding: 8px;
-            border-radius: 4px;
-            margin-top: 8px;
-        }
-        
-        .device-info .info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-            gap: 8px;
-        }
-        
-        .device-info .info-item {
-            background: rgba(0, 0, 0, 0.3);
-            padding: 6px 8px;
-            border-radius: 4px;
-        }
-        
-        .device-info .label {
-            color: #666;
-            font-size: 10px;
-            text-transform: uppercase;
-        }
-        
-        .device-info .value {
-            font-size: 12px;
-            font-weight: 600;
-            color: #00d4ff;
-        }
     </style>
 </head>
 <body>
@@ -383,10 +424,16 @@
             <h1>Bafang M400 UART Tool</h1>
             <p>Konfigurace motorů Bafang řady M400</p>
         </header>
-        
+
+        <button class="hamburger-btn" id="hamburgerBtn" onclick="toggleConnectionPanel()" title="Připojení">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+
         <div class="connection-panel" id="connectionPanel">
             <h2>Připojení</h2>
-            
+
             <div id="connectView" class="connection-view">
                 <div class="connection-controls">
                     <select id="portSelect">
@@ -396,10 +443,10 @@
                     <button class="secondary" onclick="refreshPorts()">Obnovit</button>
                 </div>
             </div>
-            
+
             <div id="connectedView" class="connection-view" style="display: none;">
-                <div class="connected-info">
-                    <div class="connected-port">
+                <div class="connection-controls">
+                    <div class="connected-device">
                         <span class="label">Port: </span>
                         <span id="connectedPort">-</span>
                     </div>
@@ -424,74 +471,78 @@
             <button class="tab" onclick="switchTab('throttle')">Plyn</button>
             <button class="tab" onclick="switchTab('live_data')">Live data</button>
             <button class="tab" onclick="switchTab('errors')">Chyby</button>
-            <button class="tab" onclick="switchTab('raw')">Raw</button>
-            <button class="tab" onclick="switchTab('experimental')">Exp.</button>
-            <button class="tab" onclick="switchTab('profiles')">Profily</button>
-            <button class="tab" onclick="switchTab('system')">Systém</button>
+            <button class="tab" onclick="switchTab('advanced')">Pokročilé</button>
         </div>
         
         <div id="basic" class="tab-content active">
             <h3>Základní nastavení</h3>
-            <div class="param-grid">
-                <div class="param-group">
-                    <h4>Baterie</h4>
-                    <div class="param-item">
-                        <label>Min. napětí (V)</label>
-                        <input type="number" id="basic_low_battery_voltage" min="18" max="60" value="28">
+            <details open>
+                <summary style="cursor: pointer; color: #00d4ff; font-size: 12px; margin-bottom: 8px;">Základní parametry</summary>
+                <div class="param-grid">
+                    <div class="param-group">
+                        <h4>Baterie</h4>
+                        <div class="param-item">
+                            <label>Min. napětí (V)</label>
+                            <input type="number" id="basic_low_battery_voltage" min="18" max="60" value="28">
+                        </div>
+                        <div class="param-item">
+                            <label>Max. proud (A)</label>
+                            <input type="number" id="basic_max_current" value="16">
+                        </div>
                     </div>
-                    <div class="param-item">
-                        <label>Max. proud (A)</label>
-                        <input type="number" id="basic_max_current" value="16">
+                    <div class="param-group">
+                        <h4>Rychlost</h4>
+                        <div class="param-item">
+                            <label>Limit (km/h)</label>
+                            <input type="number" id="basic_speed_limit" min="1" max="100" value="25">
+                        </div>
+                        <div class="param-item">
+                            <label>Velikost kola</label>
+                            <select id="basic_wheel_size">
+                                <option value="0">700C</option>
+                                <option value="1">26" (A)</option>
+                                <option value="2">26" (B)</option>
+                                <option value="3">27.5"</option>
+                                <option value="4" selected>28"</option>
+                                <option value="5">29"</option>
+                                <option value="6">16"</option>
+                                <option value="7">20"</option>
+                                <option value="8">24"</option>
+                            </select>
+                        </div>
+                        <div class="param-item">
+                            <label>Obvod kola (raw)</label>
+                            <input type="number" id="basic_wheel_circumference" min="0" max="255" value="0">
+                        </div>
+                    </div>
+                    <div class="param-group">
+                        <h4>Asistence</h4>
+                        <div class="param-item">
+                            <label>Úroveň</label>
+                            <input type="number" id="basic_assist_level" min="0" max="9" value="1">
+                        </div>
+                        <div class="param-item">
+                            <label>Startovní proud (%)</label>
+                            <input type="number" id="basic_start_current" min="0" max="100" value="20">
+                        </div>
+                        <div class="param-item">
+                            <label>Rampa (A/s)</label>
+                            <input type="number" id="basic_current_ramp" min="1" max="50" value="15">
+                        </div>
                     </div>
                 </div>
-                <div class="param-group">
-                    <h4>Rychlost</h4>
-                    <div class="param-item">
-                        <label>Limit (km/h)</label>
-                        <input type="number" id="basic_speed_limit" min="1" max="100" value="25">
-                    </div>
-                    <div class="param-item">
-                        <label>Velikost kola</label>
-                        <select id="basic_wheel_size">
-                            <option value="0">700C</option>
-                            <option value="1">26" (A)</option>
-                            <option value="2">26" (B)</option>
-                            <option value="3">27.5"</option>
-                            <option value="4" selected>28"</option>
-                            <option value="5">29"</option>
-                            <option value="6">16"</option>
-                            <option value="7">20"</option>
-                            <option value="8">24"</option>
-                        </select>
-                    </div>
-                    <div class="param-item">
-                        <label>Obvod kola (raw)</label>
-                        <input type="number" id="basic_wheel_circumference" min="0" max="255" value="0">
-                    </div>
+            </details>
+
+            <details>
+                <summary style="cursor: pointer; color: #00d4ff; font-size: 12px; margin: 8px 0;">Úrovně asistence</summary>
+                <div class="assist-levels">
+                    <div id="assistLevels"></div>
                 </div>
-                <div class="param-group">
-                    <h4>Asistence</h4>
-                    <div class="param-item">
-                        <label>Úroveň</label>
-                        <input type="number" id="basic_assist_level" min="0" max="9" value="1">
-                    </div>
-                    <div class="param-item">
-                        <label>Startovní proud (%)</label>
-                        <input type="number" id="basic_start_current" min="0" max="100" value="20">
-                    </div>
-                    <div class="param-item">
-                        <label>Rampa (A/s)</label>
-                        <input type="number" id="basic_current_ramp" min="1" max="50" value="15">
-                    </div>
-                </div>
-            </div>
-            
-            <div class="assist-levels">
-                <h4>Úrovně asistence (proud / rychlost %)</h4>
-                <div id="assistLevels"></div>
-            </div>
-            
-            <div class="param-grid">
+            </details>
+
+            <details>
+                <summary style="cursor: pointer; color: #00d4ff; font-size: 12px; margin: 8px 0;">Throttle & teplota</summary>
+                <div class="param-grid">
                 <div class="param-group">
                     <h4>Throttle</h4>
                     <div class="param-item">
@@ -520,7 +571,8 @@
                     </div>
                 </div>
             </div>
-            
+            </details>
+
             <div class="actions">
                 <button onclick="readParams()">Načíst</button>
                 <button id="writeBasicBtn" onclick="writeBasic()">Zapsat</button>
@@ -529,7 +581,9 @@
         
         <div id="pedal" class="tab-content">
             <h3>Pedálový sensor</h3>
-            <div class="param-grid">
+            <details open>
+                <summary style="cursor: pointer; color: #00d4ff; font-size: 12px; margin-bottom: 8px;">Parametry pedálového sensoru</summary>
+                <div class="param-grid">
                 <div class="param-group">
                     <h4>Sensor</h4>
                     <div class="param-item">
@@ -581,6 +635,7 @@
                     </div>
                 </div>
             </div>
+            </details>
             <div class="actions">
                 <button onclick="readParams()">Načíst</button>
                 <button id="writePedalBtn" onclick="writePedal()">Zapsat</button>
@@ -589,7 +644,9 @@
         
         <div id="throttle" class="tab-content">
             <h3>Throttle</h3>
-            <div class="param-grid">
+            <details open>
+                <summary style="cursor: pointer; color: #00d4ff; font-size: 12px; margin-bottom: 8px;">Parametry throttle</summary>
+                <div class="param-grid">
                 <div class="param-group">
                     <h4>Napětí</h4>
                     <div class="param-item">
@@ -617,6 +674,7 @@
                     </div>
                 </div>
             </div>
+            </details>
             <div class="actions">
                 <button onclick="readParams()">Načíst</button>
                 <button id="writeThrottleBtn" onclick="writeThrottle()">Zapsat</button>
@@ -705,8 +763,10 @@
             </div>
         </div>
 
-        <div id="raw" class="tab-content">
-            <h3>Raw data</h3>
+        <div id="advanced" class="tab-content">
+            <h3>Pokročilé</h3>
+            <details open>
+                <summary style="cursor: pointer; color: #00d4ff; font-size: 12px; margin-bottom: 8px;">Raw data</summary>
             <div class="param-grid">
                 <div class="param-group">
                     <h4>Basic</h4>
@@ -724,10 +784,10 @@
                     <button onclick="loadRawThrottle()" style="margin-top: 8px;">Načíst</button>
                 </div>
             </div>
-        </div>
-        
-        <div id="experimental" class="tab-content">
-            <h3>Experimentální</h3>
+            </details>
+
+            <details>
+                <summary style="cursor: pointer; color: #00d4ff; font-size: 12px; margin-bottom: 8px;">Experimentální příkazy</summary>
             <p style="color: #ff4757; font-size: 11px; margin-bottom: 10px;">UPOZORNĚNÍ: Experimentální příkazy!</p>
             <div class="param-grid">
                 <div class="param-group">
@@ -747,74 +807,7 @@
             <div id="scan_results" style="font-family: monospace; word-break: break-all; background: #111; padding: 8px; border-radius: 4px; font-size: 10px; margin-top: 8px; max-height: 150px; overflow-y: auto;">-</div>
             <button onclick="loadExperimental()" style="margin-top: 12px;">Načíst bloky</button>
             <div id="experimental_results" style="margin-top: 8px;"></div>
-        </div>
-        
-        <div id="profiles" class="tab-content">
-            <h3>Profily</h3>
-            <div class="param-grid">
-                <div class="param-group">
-                    <h4>Nový profil</h4>
-                    <input type="text" id="new_profile_name" placeholder="Název" style="width: 100%;">
-                    <input type="text" id="new_profile_desc" placeholder="Popis" style="width: 100%; margin-top: 6px;">
-                    <button onclick="saveCurrentProfile()" style="margin-top: 6px;">Uložit</button>
-                </div>
-                <div class="param-group">
-                    <h4>Načtení</h4>
-                    <select id="profile_select" style="width: 100%;">
-                        <option value="">-- Vyberte --</option>
-                    </select>
-                    <button onclick="loadSelectedProfile()" style="margin-top: 6px;">Načíst</button>
-                    <button id="applySelectedProfileBtn" onclick="applySelectedProfile()" class="secondary" style="margin-top: 4px;">Nahrát do controlleru</button>
-                </div>
-            </div>
-            <h4 style="margin-top: 12px; color: #00d4ff; font-size: 12px;">Uložené profily</h4>
-            <div id="profiles_list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; margin-top: 8px;"></div>
-            <h4 style="margin-top: 12px; color: #00d4ff; font-size: 12px;">Import/Export</h4>
-            <div class="param-grid">
-                <div class="param-group">
-                    <select id="export_profile_select" style="width: 100%;">
-                        <option value="">-- Vyberte --</option>
-                    </select>
-                    <button onclick="exportSelectedProfile()" style="margin-top: 6px;">Export</button>
-                </div>
-                <div class="param-group">
-                    <input type="file" id="import_file" accept=".json" style="width: 100%;">
-                    <button onclick="importProfile()" style="margin-top: 6px;">Import</button>
-                </div>
-            </div>
-        </div>
-        
-        <div id="system" class="tab-content">
-            <h3>Systém</h3>
-            <div class="param-grid">
-                <div class="param-group">
-                    <h4>Živá data</h4>
-                    <div id="live_wheel_speed">Rychlost: -</div>
-                    <div id="live_battery_voltage">Napětí: -</div>
-                    <div id="live_battery_current">Proud: -</div>
-                    <div id="live_controller_temp">Teplota: -</div>
-                    <button onclick="refreshLiveData()" style="margin-top: 6px;">Obnovit</button>
-                </div>
-                <div class="param-group">
-                    <h4>Chyby</h4>
-                    <div id="system_status">Stav: -</div>
-                    <div id="error_code">Kód: -</div>
-                    <button onclick="checkErrors()" style="margin-top: 6px;">Kontrola</button>
-                </div>
-                <div class="param-group">
-                    <h4>Kalibrace</h4>
-                    <button onclick="torqueCalibration()">Torque kalibrace</button>
-                    <div style="margin-top: 8px;">
-                        <input type="number" id="wheel_circumference" value="2105" style="width: 80px;">
-                        <button onclick="setWheelCircumference()">Obvod kola</button>
-                    </div>
-                </div>
-                <div class="param-group">
-                    <h4>Reset</h4>
-                    <p style="color: #ff4757; font-size: 11px;">Varování: Vymaže veškeré nastavení!</p>
-                    <button class="danger" onclick="resetDefaults()" style="margin-top: 6px;">Reset do výchozích</button>
-                </div>
-            </div>
+            </details>
         </div>
         
         <footer>
@@ -1009,7 +1002,6 @@
             localizeDOM();
             refreshPorts();
             generateAssistLevels();
-            refreshProfilesList();
             updateConnectionUI(false);
             updateWriteButtonsState();
         }
@@ -1087,10 +1079,15 @@
         function updateConnectionUI(connected) {
             const connectView = document.getElementById('connectView');
             const connectedView = document.getElementById('connectedView');
+            const connectionPanel = document.getElementById('connectionPanel');
+            const hamburgerBtn = document.getElementById('hamburgerBtn');
             
             if (connected) {
                 connectView.style.display = 'none';
                 connectedView.style.display = 'block';
+                connectionPanel.classList.add('compact', 'collapsed');
+                hamburgerBtn.classList.remove('active');
+                hamburgerBtn.title = 'Zobrazit připojení';
                 
                 fetch('/api/status')
                     .then(res => res.json())
@@ -1106,11 +1103,28 @@
             } else {
                 connectView.style.display = 'block';
                 connectedView.style.display = 'none';
+                connectionPanel.classList.remove('compact', 'collapsed');
+                hamburgerBtn.classList.remove('active');
+                hamburgerBtn.title = 'Připojení';
                 writeSafety = { basic: false, pedal: false, throttle: false };
             }
             
             setContentEnabled(connected);
             updateWriteButtonsState();
+        }
+
+        function toggleConnectionPanel() {
+            const connectionPanel = document.getElementById('connectionPanel');
+            const hamburgerBtn = document.getElementById('hamburgerBtn');
+            if (!isConnected) {
+                connectionPanel.classList.remove('compact', 'collapsed');
+                hamburgerBtn.classList.remove('active');
+                return;
+            }
+            connectionPanel.classList.add('compact');
+            const collapsed = connectionPanel.classList.toggle('collapsed');
+            hamburgerBtn.classList.toggle('active', !collapsed);
+            hamburgerBtn.title = collapsed ? 'Zobrazit připojení' : 'Skrýt připojení';
         }
         
         function setContentEnabled(enabled) {
@@ -1129,10 +1143,8 @@
             contentControls.forEach(el => el.disabled = !enabled);
             
             document.querySelectorAll('.tab').forEach(tab => {
-                if (tab.getAttribute('onclick') !== "switchTab('system')") {
-                    tab.disabled = !enabled;
-                    tab.style.opacity = enabled ? '1' : '0.5';
-                }
+                tab.disabled = !enabled;
+                tab.style.opacity = enabled ? '1' : '0.5';
             });
 
             document.getElementById('portSelect').disabled = enabled;
@@ -1348,53 +1360,6 @@
             document.getElementById('modal').classList.remove('visible');
         }
         
-        function refreshLiveData() {
-            if (!isConnected) return;
-            fetch('/api/live_data').then(r => r.json()).then(data => {
-                if (data) {
-                    document.getElementById('live_wheel_speed').textContent = (isCzech ? 'Rychlost: ' : 'Speed: ') + (data.wheel_speed ? (data.wheel_speed/10).toFixed(1) + ' km/h' : '-');
-                    document.getElementById('live_battery_voltage').textContent = (isCzech ? 'Napětí: ' : 'Voltage: ') + (data.battery_voltage ? data.battery_voltage.toFixed(1) + ' V' : '-');
-                    document.getElementById('live_battery_current').textContent = (isCzech ? 'Proud: ' : 'Current: ') + (data.battery_current ? data.battery_current.toFixed(1) + ' A' : '-');
-                    document.getElementById('live_controller_temp').textContent = (isCzech ? 'Teplota: ' : 'Temperature: ') + (data.controller_temp !== undefined ? data.controller_temp + '°C' : '-');
-                }
-            });
-        }
-        
-        function checkErrors() {
-            if (!isConnected) return;
-            fetch('/api/errors').then(r => r.json()).then(data => {
-                if (data) {
-                    document.getElementById('system_status').textContent = (isCzech ? 'Stav: ' : 'Status: ') + (data.system_status || '-');
-                    document.getElementById('error_code').textContent = (isCzech ? 'Kód: ' : 'Code: ') + (data.error_code ? '0x' + data.error_code.toString(16).toUpperCase() : '-');
-                }
-            });
-        }
-        
-        function torqueCalibration() {
-            if (!isConnected) return;
-            fetch('/api/torque_calibration', {method: 'POST'}).then(r => r.json()).then(data => {
-                showModal(data.success ? 'Úspěch' : 'Chyba', data.success ? 'Kalibrace dokončena' : 'Selhala', data.success ? 'success' : 'error');
-            });
-        }
-        
-        function setWheelCircumference() {
-            if (!isConnected) return;
-            fetch('/api/wheel_circumference', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({circumference: parseInt(document.getElementById('wheel_circumference').value)})
-            }).then(r => r.json()).then(data => {
-                showModal(data.success ? 'Úspěch' : 'Chyba', data.success ? 'Nastaveno' : 'Selhalo', data.success ? 'success' : 'error');
-            });
-        }
-        
-        function resetDefaults() {
-            if (!isConnected || !confirm('Opravdu resetovat do výchozích?')) return;
-            fetch('/api/reset', {method: 'POST'}).then(r => r.json()).then(data => {
-                showModal(data.success ? 'Úspěch' : 'Chyba', data.success ? 'Resetováno' : 'Selhalo', data.success ? 'success' : 'error');
-            });
-        }
-        
         function loadRawBasic() {
             if (!isConnected) return;
             fetch('/api/read_raw_basic').then(r => r.json()).then(data => {
@@ -1461,138 +1426,6 @@
                     });
                 }
             });
-        }
-        
-        function refreshProfilesList() {
-            fetch('/api/profiles').then(r => r.json()).then(profiles => {
-                const list = document.getElementById('profiles_list');
-                list.innerHTML = '';
-                const select = document.getElementById('profile_select');
-                select.innerHTML = '<option value="">-- Vyberte --</option>';
-                const exportSelect = document.getElementById('export_profile_select');
-                exportSelect.innerHTML = '<option value="">-- Vyberte --</option>';
-                
-                Object.keys(profiles).forEach(name => {
-                    const p = profiles[name];
-                    const div = document.createElement('div');
-                    div.style.cssText = 'background: #111; padding: 8px; border-radius: 4px;';
-                    div.innerHTML = `<strong>${p.name}</strong><br><span style="color: #666; font-size: 11px;">${p.description || ''}</span><br><button onclick="loadProfileByName('${name}')" style="padding: 4px 8px; font-size: 10px;">Načíst</button> <button onclick="applyProfileByName('${name}')" style="padding: 4px 8px; font-size: 10px;">Nahrát</button> <button onclick="deleteProfileByName('${name}')" class="danger" style="padding: 4px 8px; font-size: 10px;">X</button>`;
-                    list.appendChild(div);
-                    
-                    select.appendChild(new Option(p.name, name));
-                    exportSelect.appendChild(new Option(p.name, name));
-                });
-            });
-        }
-        
-        function saveCurrentProfile() {
-            const name = document.getElementById('new_profile_name').value.trim();
-            if (!name) { showModal('Chyba', 'Zadejte název', 'error'); return; }
-            if (!isConnected) { showModal('Chyba', 'Nejprve se připojte ke controlleru', 'error'); return; }
-            
-            fetch(`/api/profiles/${encodeURIComponent(name).replace(/%20/g, '_')}`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({config: {basic: getBasicParams(), pedal: getPedalParams(), throttle: getThrottleParams()}, description: document.getElementById('new_profile_desc').value})
-            }).then(r => r.json()).then(data => {
-                if (data.success) {
-                    document.getElementById('new_profile_name').value = '';
-                    document.getElementById('new_profile_desc').value = '';
-                    refreshProfilesList();
-                    showModal('Úspěch', 'Profil uložen', 'success');
-                }
-            });
-        }
-        
-        function loadSelectedProfile() {
-            const name = document.getElementById('profile_select').value;
-            if (name) loadProfileByName(name);
-        }
-        
-        function loadProfileByName(name) {
-            fetch(`/api/profiles/${encodeURIComponent(name).replace(/%20/g, '_')}`).then(r => r.json()).then(data => {
-                if (data.config && data.config.basic) {
-                    const b = data.config.basic;
-                    if (b.low_battery_voltage) document.getElementById('basic_low_battery_voltage').value = b.low_battery_voltage;
-                    if (b.max_current) document.getElementById('basic_max_current').value = b.max_current;
-                    if (b.speed_limit) document.getElementById('basic_speed_limit').value = b.speed_limit;
-                    if (b.start_current) document.getElementById('basic_start_current').value = b.start_current;
-                    if (b.current_ramp) document.getElementById('basic_current_ramp').value = b.current_ramp;
-                    for (let i = 0; i < 10; i++) {
-                        if (b[`assist_current_${i}`] !== undefined) document.getElementById(`basic_assist_current_${i}`).value = b[`assist_current_${i}`];
-                        if (b[`assist_speed_${i}`] !== undefined) document.getElementById(`basic_assist_speed_${i}`).value = b[`assist_speed_${i}`];
-                    }
-                }
-                if (data.config && data.config.pedal) {
-                    const p = data.config.pedal;
-                    if (p.pedal_type) document.getElementById('pedal_pedal_type').value = p.pedal_type;
-                    if (p.signal_number) document.getElementById('pedal_signal_number').value = p.signal_number;
-                    if (p.torque_gain) document.getElementById('pedal_torque_gain').value = p.torque_gain;
-                    if (p.cadence_gain) document.getElementById('pedal_cadence_gain').value = p.cadence_gain;
-                }
-                showModal('Úspěch', 'Profil načten', 'success');
-            });
-        }
-        
-        function applySelectedProfile() {
-            const name = document.getElementById('profile_select').value;
-            if (name) applyProfileByName(name);
-        }
-        
-        function applyProfileByName(name) {
-            if (!isConnected) return;
-            fetch(`/api/profiles/${encodeURIComponent(name).replace(/%20/g, '_')}/apply`, {method: 'POST'}).then(async r => {
-                const data = await r.json();
-                if (!r.ok && r.status === 409) {
-                    showModal('Chyba', data.error || 'Profil je vázaný na jiný controller', 'error');
-                    return;
-                }
-                showModal(data.success ? 'Úspěch' : 'Chyba', data.success ? 'Nahráno' : (data.error || 'Selhalo'), data.success ? 'success' : 'error');
-            });
-        }
-        
-        function deleteProfileByName(name) {
-            if (!confirm('Smazat?')) return;
-            fetch(`/api/profiles/${encodeURIComponent(name).replace(/%20/g, '_')}`, {method: 'DELETE'}).then(r => r.json()).then(data => {
-                if (data.success) refreshProfilesList();
-            });
-        }
-        
-        function exportSelectedProfile() {
-            const name = document.getElementById('export_profile_select').value;
-            if (!name) return;
-            fetch(`/api/profiles/export/${encodeURIComponent(name).replace(/%20/g, '_')}`).then(r => r.json()).then(data => {
-                const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = data.name + '.json';
-                a.click();
-            });
-        }
-        
-        function importProfile() {
-            if (!isConnected) { showModal('Chyba', 'Pro import profilu se nejprve připojte ke controlleru', 'error'); return; }
-            const file = document.getElementById('import_file').files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    const data = JSON.parse(e.target.result);
-                    fetch('/api/profiles/import', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({name: data.name || 'Imported', config: data.config || {}, description: data.description || ''})
-                    }).then(r => r.json()).then(result => {
-                        if (result.success) {
-                            refreshProfilesList();
-                            showModal('Úspěch', 'Importováno', 'success');
-                        }
-                    });
-                } catch(err) {
-                    showModal('Chyba', 'Neplatný soubor', 'error');
-                }
-            };
-            reader.readAsText(file);
         }
         
         init();

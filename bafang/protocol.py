@@ -1,7 +1,7 @@
 import serial
 import time
 import logging
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -125,21 +125,6 @@ class BafangUART:
         controller_fw: int = 0
         motor_fw: int = 0
         raw_bytes: List[int] = field(default_factory=list)
-        start_voltage: int = 1100
-        end_voltage: int = 4200
-        start_current: int = 0x0B
-        mode: int = 0x23
-        enabled: bool = True
-        assist_level: int = 0xFF
-        speed_limit: int = 0xFF
-        start_percent: Optional[int] = None
-        throttle_mode: int = 0
-        throttle_assist_level: int = 0xFF
-        throttle_speed_limit: int = 0xFF
-        throttle_start_current: int = 0x0B
-        raw_bytes: List[int] = field(default_factory=list)
-        protocol_variant: str = "native"
-        parse_warning: Optional[str] = None
 
     def __init__(self, port: str):
         self.port = port
@@ -187,8 +172,8 @@ class BafangUART:
         return sum(data) % 256
 
     def _calculate_bafang_write_checksum(self, data: bytes) -> int:
-        # OpenBafangTool writes [0x16, code, length, payload..., checksum]
-        # and computes checksum from code + length + payload, excluding 0x16.
+        # Bafang UART write checksum is computed from code + length + payload,
+        # excluding the leading write marker 0x16.
         return sum(data[1:]) % 256
 
     def _send_command(self, cmd: bytes, wait_response: bool = True, timeout: float = 0.15) -> Optional[bytes]:
@@ -226,7 +211,7 @@ class BafangUART:
         if not response or response[0] != 0x51 or len(response) < 19:
             return False
             
-        payload = response[2:-1] if len(response) >= 3 and response[1] == len(response) - 3 else response[2:]
+        payload = self._payload(response)
         self.device_info = {
             'manufacturer': bytes(payload[0:4]).decode('ascii', errors='ignore'),
             'model': bytes(payload[4:8]).decode('ascii', errors='ignore'),
@@ -247,6 +232,10 @@ class BafangUART:
 
     def _set_cache(self, key: str, data: Any):
         self._cache[key] = (time.time(), data)
+
+    def _invalidate_cache(self, *keys: str):
+        for key in keys:
+            self._cache.pop(key, None)
 
     def _capture_initial(self, section: str, values: Dict[str, Any]):
         if section not in self._initial_snapshot:
@@ -404,6 +393,11 @@ class BafangUART:
             return data[idx]
         return default
 
+    def _payload(self, response: bytes) -> bytes:
+        if len(response) >= 3 and response[1] == len(response) - 3:
+            return response[2:-1]
+        return response[2:]
+
     def _looks_like_bafang_basic(self, payload: bytes) -> bool:
         if len(payload) < 24:
             return False
@@ -474,15 +468,16 @@ class BafangUART:
         read_errors: Dict[str, Dict[str, str]] = {}
         read_warnings: Dict[str, str] = {}
 
-        def safe_read(name: str, reader):
+        def safe_read(name: str, reader, required: bool = True):
             try:
                 parsed = reader()
                 if parsed is None:
-                    read_errors[name] = {
-                        'message': 'No response or unsupported payload format',
-                        'exception_type': 'ParseError',
-                    }
-                    self._log_parse_issue(name, read_errors[name]['message'])
+                    if required:
+                        read_errors[name] = {
+                            'message': 'No response or unsupported payload format',
+                            'exception_type': 'ParseError',
+                        }
+                        self._log_parse_issue(name, read_errors[name]['message'])
                 elif hasattr(parsed, 'parse_warning') and parsed.parse_warning:
                     read_warnings[name] = str(parsed.parse_warning)
                     self._log_parse_issue(name, read_warnings[name])
@@ -501,8 +496,8 @@ class BafangUART:
             'basic': safe_read('basic', self.read_basic),
             'pedal': safe_read('pedal', self.read_pedal),
             'throttle': safe_read('throttle', self.read_throttle),
-            'live_data': safe_read('live_data', self.read_live_data),
-            'errors': safe_read('errors', self.read_errors),
+            'live_data': safe_read('live_data', self.read_live_data, required=False),
+            'errors': safe_read('errors', self.read_errors, required=False),
             'read_errors': read_errors,
             'read_warnings': read_warnings,
             'section_meta': self._section_meta,
@@ -523,7 +518,7 @@ class BafangUART:
             return None
         self._last_read['basic'] = response
         
-        payload = response[2:]
+        payload = self._payload(response)
         if len(payload) < 24:
             if len(payload) < 2:
                 return None
@@ -690,7 +685,7 @@ class BafangUART:
             return None
         self._last_read['pedal'] = response
 
-        data = response[2:]
+        data = self._payload(response)
         if len(data) < 11:
             if len(data) < 3:
                 return None
@@ -796,7 +791,7 @@ class BafangUART:
             return None
         self._last_read['throttle'] = response
         
-        data = response[2:]
+        data = self._payload(response)
         if len(data) < 5:
             if len(data) < 2:
                 return None
@@ -969,7 +964,7 @@ class BafangUART:
         
         return cmd + bytes([self._calculate_checksum(cmd)])
 
-    def _build_pedal_command(self, params: 'BafangUART.PedalParameters') -> bytes:
+    def _build_pedal_command(self, params: Dict[str, Any]) -> bytes:
         pedal_types = {'None': 0, 'DH-Sensor-12': 1, 'BB-Sensor-32': 2, 'DoubleSignal-24': 3}
         if self._section_meta.get('pedal', {}).get('variant') == 'fallback':
             raise ValueError('Write blocked in fallback pedal variant')
@@ -1011,7 +1006,7 @@ class BafangUART:
         
         return cmd + bytes([self._calculate_checksum(cmd)])
 
-    def _build_throttle_command(self, params: 'BafangUART.ThrottleParameters') -> bytes:
+    def _build_throttle_command(self, params: Dict[str, Any]) -> bytes:
         if self._section_meta.get('throttle', {}).get('variant') == 'fallback':
             raise ValueError('Write blocked in fallback throttle variant')
         if self._section_meta.get('throttle', {}).get('variant') == 'bafang':
@@ -1037,7 +1032,7 @@ class BafangUART:
         
         return cmd + bytes([self._calculate_checksum(cmd)])
 
-    def write_basic(self, params: 'BafangUART.BasicParameters') -> Dict[str, Any]:
+    def write_basic(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if 'basic' not in self._initial_snapshot:
             return {'success': False, 'error': 'Nejprve načtěte controller (Read).', 'code': None}
 
@@ -1062,7 +1057,7 @@ class BafangUART:
         variant = self._section_meta.get('basic', {}).get('variant', 'native')
         expected_ok = 0x18 if variant == 'bafang' else 0x24
         if result_code == expected_ok:
-            self._cache.pop('basic', None)
+            self._invalidate_cache('basic', 'all_params')
             self._initial_snapshot['basic'].update(changed)
             return {'success': True, 'error': None, 'code': result_code}
         
@@ -1125,7 +1120,7 @@ class BafangUART:
         result_code = response[1] if len(response) > 1 else None
         
         if result_code == 0x0B:
-            self._cache.pop('pedal', None)
+            self._invalidate_cache('pedal', 'all_params')
             self._initial_snapshot['pedal'].update(changed)
             return {'success': True, 'error': None, 'code': result_code}
         
@@ -1173,7 +1168,7 @@ class BafangUART:
         result_code = response[1] if len(response) > 1 else None
         
         if result_code == 0x06:
-            self._cache.pop('throttle', None)
+            self._invalidate_cache('throttle', 'all_params')
             self._initial_snapshot['throttle'].update(changed)
             return {'success': True, 'error': None, 'code': result_code}
         
@@ -1231,20 +1226,24 @@ class BafangUART:
         cmd = bytes([0x11, 0x19])
         response = self._send_command(cmd)
 
-        if not response or len(response) < 20:
+        if not response:
+            return None
+
+        payload = self._payload(response)
+        if len(payload) < 18:
             return None
 
         return self.LiveData(
-            wheel_speed=(response[2] << 8) | response[3],
-            motor_rpm=(response[6] << 8) | response[7],
-            battery_voltage=((response[8] << 8) | response[9]) / 10.0,
-            battery_current=((response[10] << 8) | response[11]) / 10.0,
-            motor_current=((response[12] << 8) | response[13]) / 10.0,
-            controller_temp=response[14] if response[14] < 128 else response[14] - 256,
-            motor_temp=response[15] if response[15] < 128 else response[15] - 256,
-            torque_sensor=(response[16] << 8) | response[17],
-            cadence=response[18],
-            assistant_level=response[19],
+            wheel_speed=(payload[0] << 8) | payload[1],
+            motor_rpm=(payload[4] << 8) | payload[5],
+            battery_voltage=((payload[6] << 8) | payload[7]) / 10.0,
+            battery_current=((payload[8] << 8) | payload[9]) / 10.0,
+            motor_current=((payload[10] << 8) | payload[11]) / 10.0,
+            controller_temp=payload[12] if payload[12] < 128 else payload[12] - 256,
+            motor_temp=payload[13] if payload[13] < 128 else payload[13] - 256,
+            torque_sensor=(payload[14] << 8) | payload[15],
+            cadence=payload[16],
+            assistant_level=payload[17],
             raw_bytes=list(response)
         )
 
@@ -1252,7 +1251,11 @@ class BafangUART:
         cmd = bytes([0x11, 0x1A])
         response = self._send_command(cmd)
 
-        if not response or len(response) < 6:
+        if not response:
+            return None
+
+        payload = self._payload(response)
+        if len(payload) < 3:
             return None
 
         error_codes = {
@@ -1266,10 +1269,10 @@ class BafangUART:
         }
 
         return self.Errors(
-            system_status=error_codes.get(response[2], "Neznámý"),
-            error_code=response[2],
-            controller_fw=response[3],
-            motor_fw=response[4],
+            system_status=error_codes.get(payload[0], "Neznámý"),
+            error_code=payload[0],
+            controller_fw=payload[1],
+            motor_fw=payload[2],
             raw_bytes=list(response)
         )
 

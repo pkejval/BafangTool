@@ -85,3 +85,53 @@ def test_read_throttle_with_optional_start_percent():
     assert data.end_voltage == 4200
     assert data.enabled is True
     assert data.start_percent == 88
+
+
+def test_read_live_data_uses_framed_payload_without_checksum():
+    payload = bytes([
+        0x00, 0x7B,
+        0x00, 0x00,
+        0x04, 0xD2,
+        0x01, 0xE0,
+        0x00, 0x64,
+        0x00, 0x32,
+        25,
+        250,
+        0x01, 0x2C,
+        80,
+        3,
+    ])
+    frame = bytes([0x19, len(payload)]) + payload
+    response = frame + bytes([sum(frame) & 0xFF])
+    uart = BafangUART(port="COM_TEST")
+    uart._send_command = lambda cmd: response
+
+    data = uart.read_live_data()
+
+    assert data is not None
+    assert data.wheel_speed == 123
+    assert data.motor_rpm == 1234
+    assert data.battery_voltage == 48.0
+    assert data.battery_current == 10.0
+    assert data.motor_current == 5.0
+    assert data.controller_temp == 25
+    assert data.motor_temp == -6
+    assert data.torque_sensor == 300
+    assert data.cadence == 80
+    assert data.assistant_level == 3
+
+
+def test_read_errors_uses_framed_payload_without_checksum():
+    payload = bytes([0x21, 2, 3])
+    frame = bytes([0x1A, len(payload)]) + payload
+    response = frame + bytes([sum(frame) & 0xFF])
+    uart = BafangUART(port="COM_TEST")
+    uart._send_command = lambda cmd: response
+
+    data = uart.read_errors()
+
+    assert data is not None
+    assert data.error_code == 0x21
+    assert data.system_status == "Rychlostní sensor (E21)"
+    assert data.controller_fw == 2
+    assert data.motor_fw == 3

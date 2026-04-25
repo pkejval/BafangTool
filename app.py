@@ -2,8 +2,9 @@ import logging
 import os
 import json
 import hashlib
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 from werkzeug.exceptions import HTTPException
 from bafang.protocol import BafangUART
 
@@ -22,6 +23,20 @@ def _api_error_response(message: str, status_code: int, exception_type: str | No
     if exception_type:
         payload['exception_type'] = exception_type
     return jsonify(payload), status_code
+
+
+def api_json(data, status_code: int = 200):
+    def convert(value):
+        if is_dataclass(value):
+            return asdict(value)
+        if isinstance(value, dict):
+            return {key: convert(val) for key, val in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [convert(item) for item in value]
+        return value
+
+    response = jsonify(convert(data))
+    return (response, status_code) if status_code != 200 else response
 
 
 @app.errorhandler(HTTPException)
@@ -90,6 +105,11 @@ def get_controller_binding() -> dict:
 def index():
     return render_template('index.html')
 
+
+@app.route('/favicon.ico')
+def favicon():
+    return Response(status=204)
+
 @app.route('/api/ports')
 def ports():
     return jsonify(get_available_ports())
@@ -127,7 +147,7 @@ def status():
 @app.route('/api/read')
 @require_connection
 def read_params():
-    return jsonify(get_controller().read_all_known_params())
+    return api_json(get_controller().read_all_known_params())
 
 @app.route('/api/write', methods=['POST'])
 @require_connection
@@ -154,12 +174,12 @@ def write_throttle():
 @app.route('/api/live_data')
 @require_connection
 def live_data():
-    return jsonify(get_controller().read_live_data() or {})
+    return api_json(get_controller().read_live_data() or {})
 
 @app.route('/api/errors')
 @require_connection
 def errors():
-    return jsonify(get_controller().read_errors() or {})
+    return api_json(get_controller().read_errors() or {})
 
 @app.route('/api/torque_calibration', methods=['POST'])
 @require_connection
