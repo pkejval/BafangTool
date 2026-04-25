@@ -6,6 +6,9 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+android-app/build/
+.gradle/
+local.properties
 *.spec
 profiles.json
 .DS_Store

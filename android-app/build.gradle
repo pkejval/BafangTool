@@ -1,0 +1,48 @@
+plugins {
+    id "com.android.application"
+    id "com.chaquo.python"
+}
+
+android {
+    namespace "cz.bafang.tool"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "cz.bafang.tool"
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName "0.1.0"
+        ndk {
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+        }
+    }
+
+    lint {
+        checkReleaseBuilds false
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.11"
+    }
+    sourceSets {
+        main {
+            srcDir "../bafang"
+            srcDir "src/main/python"
+        }
+    }
+}
+
+dependencies {
+    implementation "com.github.mik3y:usb-serial-for-android:3.8.1"
+    implementation "com.google.android.material:material:1.12.0"
+}

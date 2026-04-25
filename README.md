@@ -77,8 +77,21 @@ GitHub Actions workflow builds release artifacts for:
 - Linux
 - Windows
 - macOS
+- Android APK for USB OTG USB-to-Serial adapters
 
 Release is created automatically on Git tags like `v1.2.0`.
+
+## Android APK
+
+The Android app is native and uses Android USB Host mode. Connect the Bafang programming cable through a USB OTG adapter, grant USB permission, then use the app to connect and read controller blocks.
+
+Local APK build:
+
+```bash
+gradle assembleRelease
+```
+
+The CI release artifact is named `BafangTool-<tag>-android.apk`.
 
 ## Legal / Warranty
 

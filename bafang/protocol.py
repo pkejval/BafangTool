@@ -1,4 +1,7 @@
-import serial
+try:
+    import serial
+except ImportError:
+    serial = None
 import time
 import logging
 from typing import Optional, Dict, Any, Tuple, List
@@ -126,9 +129,10 @@ class BafangUART:
         motor_fw: int = 0
         raw_bytes: List[int] = field(default_factory=list)
 
-    def __init__(self, port: str):
+    def __init__(self, port: str, serial_transport=None):
         self.port = port
-        self.serial: Optional[serial.Serial] = None
+        self.serial = serial_transport
+        self._external_serial = serial_transport is not None
         self.connected = False
         self.device_info: Dict[str, Any] = {}
         self._cache: Dict[str, Tuple[float, Any]] = {}
@@ -139,14 +143,17 @@ class BafangUART:
 
     def connect(self) -> bool:
         try:
-            self.serial = serial.Serial(
-                port=self.port,
-                baudrate=BAUDRATE,
-                bytesize=DATA_BITS,
-                parity=PARITY,
-                stopbits=STOP_BITS,
-                timeout=2.0
-            )
+            if self.serial is None:
+                if serial is None:
+                    raise RuntimeError('pyserial is not available and no serial transport was provided')
+                self.serial = serial.Serial(
+                    port=self.port,
+                    baudrate=BAUDRATE,
+                    bytesize=DATA_BITS,
+                    parity=PARITY,
+                    stopbits=STOP_BITS,
+                    timeout=2.0
+                )
             time.sleep(0.3)
             
             if self._connect_cmd():
@@ -159,8 +166,10 @@ class BafangUART:
             return False
 
     def disconnect(self):
-        if self.serial and self.serial.is_open:
+        if self.serial and self._serial_is_open():
             self.serial.close()
+        if self._external_serial:
+            self.serial = None
         self.connected = False
         self._cache.clear()
         self._last_read.clear()
@@ -177,7 +186,7 @@ class BafangUART:
         return sum(data[1:]) % 256
 
     def _send_command(self, cmd: bytes, wait_response: bool = True, timeout: float = 0.15) -> Optional[bytes]:
-        if not self.serial or not self.serial.is_open:
+        if not self.serial or not self._serial_is_open():
             return None
         
         try:
@@ -193,6 +202,14 @@ class BafangUART:
         except Exception as e:
             logger.error(f"Send command error: {e}")
             return None
+
+    def _serial_is_open(self) -> bool:
+        is_open = getattr(self.serial, 'is_open', None)
+        if callable(is_open):
+            return bool(is_open())
+        if is_open is None:
+            return True
+        return bool(is_open)
 
     def _send_with_retry(self, cmd: bytes, expected_response_id: int, max_retries: int = 2) -> Optional[bytes]:
         """Send command with retry on failure"""
