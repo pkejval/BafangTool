@@ -326,6 +326,27 @@
             flex: 1;
             max-width: 160px;
         }
+
+        .controller-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin: 10px 0 14px;
+            padding: 10px 12px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: rgba(0, 212, 255, 0.06);
+        }
+
+        .controller-toolbar button {
+            min-width: 140px;
+        }
+
+        .controller-status {
+            color: #9aa3b2;
+            font-size: 12px;
+        }
         
         .modal {
             display: none;
@@ -455,6 +476,7 @@
                         <span id="connectedDevice">-</span>
                     </div>
                     <span class="status-badge connected">Připojeno</span>
+                    <button class="secondary" id="refreshControllerBtnCompact" onclick="refreshController()">Refresh</button>
                     <button class="danger" onclick="disconnect()">Odpojit</button>
                 </div>
             </div>
@@ -472,6 +494,14 @@
             <button class="tab" onclick="switchTab('live_data')">Live data</button>
             <button class="tab" onclick="switchTab('errors')">Chyby</button>
             <button class="tab" onclick="switchTab('advanced')">Pokročilé</button>
+        </div>
+
+        <div class="controller-toolbar">
+            <div>
+                <strong>Controller data</strong>
+                <div class="controller-status" id="controllerRefreshStatus">Po připojení se načte automaticky</div>
+            </div>
+            <button class="secondary" id="refreshControllerBtn" onclick="refreshController()">Refresh vše</button>
         </div>
         
         <div id="basic" class="tab-content active">
@@ -574,7 +604,6 @@
             </details>
 
             <div class="actions">
-                <button onclick="readParams()">Načíst</button>
                 <button id="writeBasicBtn" onclick="writeBasic()">Zapsat</button>
             </div>
         </div>
@@ -637,7 +666,6 @@
             </div>
             </details>
             <div class="actions">
-                <button onclick="readParams()">Načíst</button>
                 <button id="writePedalBtn" onclick="writePedal()">Zapsat</button>
             </div>
         </div>
@@ -676,13 +704,17 @@
             </div>
             </details>
             <div class="actions">
-                <button onclick="readParams()">Načíst</button>
                 <button id="writeThrottleBtn" onclick="writeThrottle()">Zapsat</button>
             </div>
         </div>
 
         <div id="live_data" class="tab-content">
             <h3>Live data</h3>
+            <div class="actions">
+                <button id="liveStartBtn" onclick="startLiveData()">Spustit live</button>
+                <button id="liveStopBtn" onclick="stopLiveData()">Zastavit live</button>
+                <span id="live_status">Live data zastavena</span>
+            </div>
             <div class="param-grid">
                 <div class="param-group">
                     <div class="param-item">
@@ -731,9 +763,6 @@
                     </div>
                 </div>
             </div>
-            <div class="actions">
-                <button onclick="readParams()">Načíst</button>
-            </div>
         </div>
 
         <div id="errors" class="tab-content">
@@ -759,7 +788,7 @@
                 </div>
             </div>
             <div class="actions">
-                <button onclick="readParams()">Načíst</button>
+                <button class="secondary" onclick="refreshController()">Refresh chyb</button>
             </div>
         </div>
 
@@ -828,6 +857,8 @@
     <script>
         let isConnected = false;
         let writeSafety = { basic: false, pedal: false, throttle: false };
+        let livePollTimer = null;
+        let activeTabId = 'basic';
         const isCzech = (navigator.language || 'en').toLowerCase().startsWith('cs');
 
         const I18N_MAP = {
@@ -1056,7 +1087,8 @@
                     isConnected = true;
                     updateConnectionUI(true);
                     closeModal();
-                    showModal('Úspěch', 'Připojeno', 'success');
+                    setControllerRefreshStatus('Připojeno, načítám controller...');
+                    refreshController({showModal: false});
                 } else {
                     closeModal();
                     showModal('Chyba', data.error || 'Připojení selhalo', 'error');
@@ -1069,6 +1101,7 @@
         }
         
         function disconnect() {
+            stopLivePolling();
             fetch('/api/disconnect', {method: 'POST'})
                 .then(() => {
                     isConnected = false;
@@ -1101,12 +1134,14 @@
                         }
                     });
             } else {
+                stopLivePolling();
                 connectView.style.display = 'block';
                 connectedView.style.display = 'none';
                 connectionPanel.classList.remove('compact', 'collapsed');
                 hamburgerBtn.classList.remove('active');
                 hamburgerBtn.title = 'Připojení';
                 writeSafety = { basic: false, pedal: false, throttle: false };
+                setControllerRefreshStatus('Po připojení se načte automaticky');
             }
             
             setContentEnabled(connected);
@@ -1151,15 +1186,33 @@
             document.querySelector('#connectView button[onclick="connect()"]')?.removeAttribute('disabled');
             document.querySelector('#connectView button[onclick="refreshPorts()"]')?.removeAttribute('disabled');
             document.querySelector('#connectedView button[onclick="disconnect()"]')?.removeAttribute('disabled');
+            document.querySelector('#connectedView button[onclick="refreshController()"]')?.removeAttribute('disabled');
         }
-        
-        function readParams() {
+
+        function setControllerRefreshStatus(message, isError = false) {
+            const status = document.getElementById('controllerRefreshStatus');
+            if (!status) return;
+            status.textContent = message;
+            status.style.color = isError ? '#ff8a80' : '#9aa3b2';
+        }
+
+        function setRefreshBusy(busy) {
+            ['refreshControllerBtn', 'refreshControllerBtnCompact'].forEach(id => {
+                const button = document.getElementById(id);
+                if (button) button.disabled = busy || !isConnected;
+            });
+        }
+
+        function refreshController(options = {}) {
             if (!isConnected) { showModal('Chyba', 'Nejste připojeni', 'error'); return; }
-            showModal('Načítání', 'Načítám...', 'loading');
+            const shouldShowModal = options.showModal !== false;
+            setRefreshBusy(true);
+            setControllerRefreshStatus('Obnovuji data z controlleru...');
+            if (shouldShowModal) showModal('Načítání', 'Obnovuji data z controlleru...', 'loading');
             fetch('/api/read')
                 .then(res => res.json())
                 .then(data => {
-                    closeModal();
+                    if (shouldShowModal) closeModal();
                     updateWriteSafetyFromRead(data);
                     if (data.basic) {
                         document.getElementById('basic_low_battery_voltage').value = data.basic.low_battery_voltage;
@@ -1200,18 +1253,7 @@
                         document.getElementById('throttle_mode').value = data.throttle.mode;
                         document.getElementById('throttle_enabled').checked = data.throttle.enabled;
                     }
-                    if (data.live_data) {
-                        document.getElementById('live_wheel_speed').value = data.live_data.wheel_speed;
-                        document.getElementById('live_motor_rpm').value = data.live_data.motor_rpm;
-                        document.getElementById('live_battery_voltage').value = data.live_data.battery_voltage;
-                        document.getElementById('live_battery_current').value = data.live_data.battery_current;
-                        document.getElementById('live_motor_current').value = data.live_data.motor_current;
-                        document.getElementById('live_controller_temp').value = data.live_data.controller_temp;
-                        document.getElementById('live_motor_temp').value = data.live_data.motor_temp;
-                        document.getElementById('live_torque_sensor').value = data.live_data.torque_sensor;
-                        document.getElementById('live_cadence').value = data.live_data.cadence;
-                        document.getElementById('live_assistant_level').value = data.live_data.assistant_level;
-                    }
+                    if (data.live_data) updateLiveFields(data.live_data);
                     if (data.errors) {
                         document.getElementById('error_system_status').value = data.errors.system_status;
                         document.getElementById('error_error_code').value = data.errors.error_code;
@@ -1222,6 +1264,7 @@
                         const detail = Object.entries(data.read_errors)
                             .map(([section, info]) => `${section}: ${formatApiError(info, 'unknown error')}`)
                             .join(' | ');
+                        setControllerRefreshStatus(`Obnova neúplná: ${detail}`, true);
                         showModal('Chyba', detail, 'error');
                         return;
                     }
@@ -1229,11 +1272,22 @@
                         const detail = Object.entries(data.read_warnings)
                             .map(([section, msg]) => `${section}: ${msg}`)
                             .join(' | ');
+                        setControllerRefreshStatus(`Varování: ${detail}`, true);
                         showModal('Varování', `${detail}. Zápis je preventivně zablokován.`, 'error');
                         return;
                     }
-                    showModal('Úspěch', 'Nastavení načteno', 'success');
-                });
+                    setControllerRefreshStatus(`Obnoveno ${new Date().toLocaleTimeString()}`);
+                    if (shouldShowModal) showModal('Úspěch', 'Data obnovena', 'success');
+                })
+                .catch(err => {
+                    if (shouldShowModal) closeModal();
+                    setControllerRefreshStatus(err?.message || 'Obnova selhala', true);
+                })
+                .finally(() => setRefreshBusy(false));
+        }
+
+        function readParams() {
+            refreshController();
         }
         
         function getBasicParams() {
@@ -1338,12 +1392,108 @@
                 }
             });
         }
+
+        function setLiveStatus(message, isError = false) {
+            const status = document.getElementById('live_status');
+            if (!status) return;
+            status.textContent = message;
+            status.style.color = isError ? '#c62828' : '#2e7d32';
+        }
+
+        function updateLiveFields(data) {
+            if (!data) return;
+            document.getElementById('live_wheel_speed').value = data.wheel_speed ?? '';
+            document.getElementById('live_motor_rpm').value = data.motor_rpm ?? '';
+            document.getElementById('live_battery_voltage').value = data.battery_voltage ?? '';
+            document.getElementById('live_battery_current').value = data.battery_current ?? '';
+            document.getElementById('live_motor_current').value = data.motor_current ?? '';
+            document.getElementById('live_controller_temp').value = data.controller_temp ?? '';
+            document.getElementById('live_motor_temp').value = data.motor_temp ?? '';
+            document.getElementById('live_torque_sensor').value = data.torque_sensor ?? '';
+            document.getElementById('live_cadence').value = data.cadence ?? '';
+            document.getElementById('live_assistant_level').value = data.assistant_level ?? '';
+        }
+
+        function updateLiveButtons(running) {
+            const startBtn = document.getElementById('liveStartBtn');
+            const stopBtn = document.getElementById('liveStopBtn');
+            if (startBtn) startBtn.disabled = !isConnected || running;
+            if (stopBtn) stopBtn.disabled = !isConnected || !running;
+        }
+
+        function pollLiveStatus() {
+            if (!isConnected || activeTabId !== 'live_data') return;
+            fetch('/api/live/status')
+                .then(res => res.json())
+                .then(data => {
+                    updateLiveButtons(!!data.running);
+                    if (data.latest) updateLiveFields(data.latest);
+                    if (data.last_error && data.failure_count > 2) {
+                        setLiveStatus(`Live problém: ${data.last_error}`, true);
+                    } else if (data.running) {
+                        const age = data.age == null ? '-' : `${data.age.toFixed(1)} s`;
+                        setLiveStatus(`Live běží, poslední vzorek před ${age}`);
+                    } else {
+                        setLiveStatus('Live data zastavena');
+                    }
+                })
+                .catch(() => {
+                    setLiveStatus('Live status není dostupný', true);
+                });
+        }
+
+        function startLivePolling() {
+            if (livePollTimer) return;
+            pollLiveStatus();
+            livePollTimer = setInterval(pollLiveStatus, 500);
+        }
+
+        function stopLivePolling() {
+            if (livePollTimer) {
+                clearInterval(livePollTimer);
+                livePollTimer = null;
+            }
+            updateLiveButtons(false);
+            setLiveStatus('Live data zastavena');
+        }
+
+        function startLiveData() {
+            if (!isConnected) { showModal('Chyba', 'Nejste připojeni', 'error'); return; }
+            fetch('/api/live/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({interval: 0.5})
+            })
+            .then(res => res.json())
+            .then(data => {
+                updateLiveButtons(!!data.running);
+                startLivePolling();
+                setLiveStatus(data.running ? 'Live běží' : 'Live data se spouští');
+            });
+        }
+
+        function stopLiveData() {
+            fetch('/api/live/stop', {method: 'POST'})
+                .then(res => res.json())
+                .then(() => {
+                    stopLivePolling();
+                });
+        }
         
         function switchTab(tabId) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
             document.querySelector(`.tab[onclick="switchTab('${tabId}')"]`).classList.add('active');
             document.getElementById(tabId).classList.add('active');
+            activeTabId = tabId;
+            if (tabId === 'live_data' && isConnected) {
+                startLiveData();
+            } else if (tabId === 'errors' && isConnected) {
+                refreshController({showModal: false});
+                if (livePollTimer) stopLiveData();
+            } else if (livePollTimer) {
+                stopLiveData();
+            }
         }
         
         function showModal(title, message, type) {

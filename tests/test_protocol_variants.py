@@ -106,6 +106,8 @@ def test_bafang_write_packets_match_reference_checksum():
     assert pedal_cmd[-1] == sum(pedal_cmd[1:-1]) & 0xFF
     assert throttle_cmd[-1] == sum(throttle_cmd[1:-1]) & 0xFF
     assert basic_cmd[:3] == bytes([0x16, 0x52, 0x18])
+    assert list(basic_cmd[5:15]) == [i * 10 for i in range(10)]
+    assert list(basic_cmd[15:25]) == [100] * 10
     assert pedal_cmd[:3] == bytes([0x16, 0x53, 0x0B])
     assert throttle_cmd[:3] == bytes([0x16, 0x54, 0x06])
 

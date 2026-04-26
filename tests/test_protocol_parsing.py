@@ -1,4 +1,37 @@
 from bafang.protocol import BafangUART
+import threading
+import time
+
+
+class ChunkedSerial:
+    def __init__(self, chunks):
+        self.chunks = list(chunks)
+        self.writes = []
+        self.is_open = True
+        self.lock = threading.Lock()
+
+    @property
+    def in_waiting(self):
+        return 1
+
+    def write(self, data):
+        self.writes.append(bytes(data))
+
+    def flush(self):
+        pass
+
+    def read(self, size):
+        time.sleep(0.01)
+        with self.lock:
+            if not self.chunks:
+                return b''
+            return self.chunks.pop(0)
+
+    def reset_input_buffer(self):
+        pass
+
+    def close(self):
+        self.is_open = False
 
 
 def _uart_with_response(response_bytes: bytes) -> BafangUART:
@@ -123,15 +156,44 @@ def test_read_live_data_uses_framed_payload_without_checksum():
 
 def test_read_errors_uses_framed_payload_without_checksum():
     payload = bytes([0x21, 2, 3])
-    frame = bytes([0x1A, len(payload)]) + payload
+    frame = bytes([0x15, len(payload)]) + payload
     response = frame + bytes([sum(frame) & 0xFF])
     uart = BafangUART(port="COM_TEST")
-    uart._send_command = lambda cmd: response
+    sent = []
+    uart._send_command = lambda cmd: sent.append(cmd) or response
 
     data = uart.read_errors()
 
     assert data is not None
+    assert sent == [bytes([0x14, 0x15])]
     assert data.error_code == 0x21
     assert data.system_status == "Rychlostní sensor (E21)"
     assert data.controller_fw == 2
     assert data.motor_fw == 3
+
+
+def test_extract_frame_skips_noise_and_validates_checksum():
+    payload = bytes([41, 12, 0, 23])
+    frame = bytes([0x52, len(payload)]) + payload
+    response = frame + bytes([sum(frame) & 0xFF])
+    uart = BafangUART(port="COM_TEST")
+
+    assert uart._extract_frame(bytes([0x99, 0x88]) + response) == response
+
+
+def test_event_reader_reassembles_chunks_and_waits_for_matching_frame():
+    wrong_payload = bytes([1])
+    wrong_frame = bytes([0x53, len(wrong_payload)]) + wrong_payload
+    wrong_frame += bytes([sum(wrong_frame) & 0xFF])
+    payload = bytes([41, 12, 0, 23])
+    frame = bytes([0x52, len(payload)]) + payload
+    response = frame + bytes([sum(frame) & 0xFF])
+    serial = ChunkedSerial([wrong_frame[:2], wrong_frame[2:], response[:2], response[2:]])
+    uart = BafangUART(port="COM_TEST", serial_transport=serial)
+    uart._start_reader()
+
+    try:
+        assert uart._send_command(bytes([0x11, 0x52]), timeout=1.0) == response
+        assert serial.writes == [bytes([0x11, 0x52])]
+    finally:
+        uart.disconnect()

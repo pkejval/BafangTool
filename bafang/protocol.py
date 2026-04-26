@@ -4,6 +4,8 @@ except ImportError:
     serial = None
 import time
 import logging
+import threading
+from collections import deque
 from typing import Optional, Dict, Any, Tuple, List
 from dataclasses import dataclass, field
 
@@ -140,6 +142,12 @@ class BafangUART:
         self._initial_snapshot: Dict[str, Dict[str, Any]] = {}
         self._allowed_keys: Dict[str, set] = {}
         self._section_meta: Dict[str, Dict[str, Any]] = {}
+        self._rx_buffer = bytearray()
+        self._rx_frames = deque(maxlen=64)
+        self._rx_condition = threading.Condition()
+        self._command_lock = threading.Lock()
+        self._reader_thread: Optional[threading.Thread] = None
+        self._reader_stop = threading.Event()
 
     def connect(self) -> bool:
         try:
@@ -152,9 +160,11 @@ class BafangUART:
                     bytesize=DATA_BITS,
                     parity=PARITY,
                     stopbits=STOP_BITS,
-                    timeout=2.0
+                    timeout=0.05
                 )
-            time.sleep(0.3)
+            self._drain_input()
+            self._start_reader()
+            time.sleep(0.1)
             
             if self._connect_cmd():
                 self.connected = True
@@ -166,6 +176,7 @@ class BafangUART:
             return False
 
     def disconnect(self):
+        self._stop_reader()
         if self.serial and self._serial_is_open():
             self.serial.close()
         if self._external_serial:
@@ -176,6 +187,10 @@ class BafangUART:
         self._initial_snapshot.clear()
         self._allowed_keys.clear()
         self._section_meta.clear()
+        with self._rx_condition:
+            self._rx_buffer.clear()
+            self._rx_frames.clear()
+            self._rx_condition.notify_all()
 
     def _calculate_checksum(self, data: bytes) -> int:
         return sum(data) % 256
@@ -185,23 +200,179 @@ class BafangUART:
         # excluding the leading write marker 0x16.
         return sum(data[1:]) % 256
 
-    def _send_command(self, cmd: bytes, wait_response: bool = True, timeout: float = 0.15) -> Optional[bytes]:
+    def _start_reader(self):
+        if self._reader_thread and self._reader_thread.is_alive():
+            return
+        if not self.serial or not self._serial_is_open():
+            return
+        self._reader_stop.clear()
+        self._reader_thread = threading.Thread(target=self._reader_loop, name=f"BafangUART-{self.port}", daemon=True)
+        self._reader_thread.start()
+
+    def _stop_reader(self):
+        self._reader_stop.set()
+        with self._rx_condition:
+            self._rx_condition.notify_all()
+        if self._reader_thread and self._reader_thread.is_alive():
+            self._reader_thread.join(timeout=0.5)
+        self._reader_thread = None
+
+    def _reader_loop(self):
+        while not self._reader_stop.is_set():
+            try:
+                if not self.serial or not self._serial_is_open():
+                    break
+                waiting = getattr(self.serial, 'in_waiting', 0)
+                if callable(waiting):
+                    waiting = waiting()
+                size = max(1, min(int(waiting or 1), 2048))
+                chunk = self.serial.read(size)
+                if chunk:
+                    self._append_rx_data(bytes(chunk))
+            except Exception as e:
+                if not self._reader_stop.is_set():
+                    logger.error(f"Serial reader error: {e}")
+                break
+
+    def _append_rx_data(self, data: bytes):
+        with self._rx_condition:
+            self._rx_buffer.extend(data)
+            self._parse_rx_buffer_locked()
+            self._rx_condition.notify_all()
+
+    def _parse_rx_buffer_locked(self):
+        while len(self._rx_buffer) >= 3:
+            if ((self._rx_buffer[0] + self._rx_buffer[1]) & 0xFF) == self._rx_buffer[2]:
+                self._rx_frames.append(bytes(self._rx_buffer[:3]))
+                del self._rx_buffer[:3]
+                continue
+
+            packet_len = self._rx_buffer[1] + 3
+            if len(self._rx_buffer) < packet_len:
+                # If the declared length is impossible for the current stream,
+                # drop one byte and keep searching for the next valid header.
+                if self._rx_buffer[1] > 128 and len(self._rx_buffer) > 3:
+                    del self._rx_buffer[0]
+                    continue
+                break
+
+            frame = bytes(self._rx_buffer[:packet_len])
+            if (sum(frame[:-1]) & 0xFF) == frame[-1]:
+                self._rx_frames.append(frame)
+                del self._rx_buffer[:packet_len]
+                continue
+
+            del self._rx_buffer[0]
+
+    def _clear_queued_frames(self):
+        with self._rx_condition:
+            self._rx_buffer.clear()
+            self._rx_frames.clear()
+
+    def _infer_response_id(self, cmd: bytes) -> Optional[int]:
+        if len(cmd) >= 2 and cmd[0] in (0x11, 0x14, 0x16):
+            return cmd[1]
+        if len(cmd) >= 2 and cmd[0] == 0x17:
+            return cmd[1]
+        return None
+
+    def _frame_matches(self, frame: bytes, expected_response_id: Optional[int]) -> bool:
+        if expected_response_id is None:
+            return True
+        return len(frame) > 0 and frame[0] == expected_response_id
+
+    def _wait_for_frame(self, expected_response_id: Optional[int], timeout: float) -> Optional[bytes]:
+        deadline = time.monotonic() + max(timeout, 0.3)
+        deferred = []
+        with self._rx_condition:
+            while True:
+                for _ in range(len(self._rx_frames)):
+                    frame = self._rx_frames.popleft()
+                    if self._frame_matches(frame, expected_response_id):
+                        for old in reversed(deferred):
+                            self._rx_frames.appendleft(old)
+                        return frame
+                    deferred.append(frame)
+
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    for old in reversed(deferred):
+                        self._rx_frames.appendleft(old)
+                    return None
+                self._rx_condition.wait(min(remaining, 0.05))
+
+    def _send_command(self, cmd: bytes, wait_response: bool = True, timeout: float = 0.6) -> Optional[bytes]:
         if not self.serial or not self._serial_is_open():
             return None
         
         try:
-            self.serial.write(cmd)
-            self.serial.flush()
-            
-            if not wait_response:
-                return b'\x01'
-            
-            time.sleep(timeout)
-            response = self.serial.read(2048)
-            return response if response else None
+            if not self._reader_thread or not self._reader_thread.is_alive():
+                self._start_reader()
+            expected_response_id = self._infer_response_id(cmd)
+            with self._command_lock:
+                self._clear_queued_frames()
+                self.serial.write(cmd)
+                self.serial.flush()
+
+                if not wait_response:
+                    return b'\x01'
+
+                return self._wait_for_frame(expected_response_id, timeout)
         except Exception as e:
             logger.error(f"Send command error: {e}")
             return None
+
+    def _drain_input(self):
+        for method in ('reset_input_buffer', 'flushInput'):
+            fn = getattr(self.serial, method, None)
+            if callable(fn):
+                try:
+                    fn()
+                    return
+                except Exception:
+                    pass
+
+    def _read_response(self, timeout: float = 0.3, size: int = 2048) -> bytes:
+        deadline = time.time() + max(timeout, 0.3)
+        buffer = bytearray()
+        while time.time() < deadline:
+            chunk = self.serial.read(size)
+            if chunk:
+                buffer.extend(chunk)
+                frame = self._extract_frame(bytes(buffer))
+                if frame:
+                    return frame
+            elif buffer:
+                frame = self._extract_frame(bytes(buffer), allow_incomplete=True)
+                if frame:
+                    return frame
+                break
+        return bytes(buffer)
+
+    def _extract_frame(self, data: bytes, allow_incomplete: bool = False) -> Optional[bytes]:
+        idx = 0
+        while idx < len(data):
+            remaining = data[idx:]
+            if len(remaining) >= 3 and ((remaining[0] + remaining[1]) & 0xFF) == remaining[2]:
+                return remaining[:3]
+            if len(remaining) >= 3:
+                packet_len = remaining[1] + 3
+                if len(remaining) >= packet_len:
+                    frame = remaining[:packet_len]
+                    if (sum(frame[:-1]) & 0xFF) == frame[-1]:
+                        return frame
+                    idx += 1
+                    continue
+                if allow_incomplete:
+                    return remaining
+                if idx + 1 < len(data):
+                    idx += 1
+                    continue
+                break
+            if allow_incomplete:
+                return remaining
+            break
+        return None
 
     def _serial_is_open(self) -> bool:
         is_open = getattr(self.serial, 'is_open', None)
@@ -214,7 +385,7 @@ class BafangUART:
     def _send_with_retry(self, cmd: bytes, expected_response_id: int, max_retries: int = 2) -> Optional[bytes]:
         """Send command with retry on failure"""
         for attempt in range(max_retries):
-            response = self._send_command(cmd)
+            response = self._send_command(cmd, timeout=0.3)
             if response and len(response) > 0 and response[0] == expected_response_id:
                 return response
             if attempt < max_retries - 1:
@@ -233,12 +404,33 @@ class BafangUART:
             'manufacturer': bytes(payload[0:4]).decode('ascii', errors='ignore'),
             'model': bytes(payload[4:8]).decode('ascii', errors='ignore'),
             'hw_version': f"{chr(payload[8])}.{chr(payload[9])}" if len(payload) > 9 else '',
-            'fw_version': '',
-            'voltage': {0: "24V", 1: "36V", 2: "48V", 3: "43V", 4: "24V-48V"}.get(payload[14] if len(payload) > 14 else None, "Unknown"),
+            'fw_version': '.'.join(str(b) for b in payload[10:14]) if len(payload) > 13 else '',
+            'voltage': {0: "24V", 1: "36V", 2: "48V", 3: "60V", 4: "24V-48V"}.get(payload[14] if len(payload) > 14 else None, "24V-60V"),
             'max_current': payload[15] if len(payload) > 15 else None,
             'raw_connect_response': response.hex()
         }
         return True
+
+    def _read_ascii_info(self, cmd: bytes) -> Optional[str]:
+        response = self._send_command(cmd, timeout=0.3)
+        if not response:
+            return None
+        payload = self._payload(response)
+        return bytes(payload).decode('ascii', errors='ignore').strip()
+
+    def _refresh_openbafang_info(self):
+        firmware = self._read_ascii_info(bytes([0x11, 0x50]))
+        system_code = self._read_ascii_info(bytes([0x14, 0x13]))
+        serial_number = self._read_ascii_info(bytes([0x14, 0x14]))
+        model_detail = self._read_ascii_info(bytes([0x14, 0x16]))
+        if firmware:
+            self.device_info['fw_version'] = firmware
+        if system_code:
+            self.device_info['system_code'] = system_code
+        if serial_number:
+            self.device_info['serial_number'] = serial_number
+        if model_detail:
+            self.device_info['model_detail'] = model_detail
 
     def _get_cache(self, key: str) -> Optional[Any]:
         if key in self._cache:
@@ -508,13 +700,22 @@ class BafangUART:
                 self._log_parse_issue(name, read_errors[name]['message'])
                 return None
             
+        basic = safe_read('basic', self.read_basic)
+        # OpenBafangTool reads basic twice; a number of controllers return a
+        # stale first frame after connect, so refresh it once before rendering.
+        basic = safe_read('basic', lambda: self.read_basic(use_cache=False)) or basic
+        pedal = safe_read('pedal', self.read_pedal)
+        throttle = safe_read('throttle', self.read_throttle)
+        live_data = safe_read('live_data', self.read_live_data, required=False)
+        errors = safe_read('errors', self.read_errors, required=False)
+        self._refresh_openbafang_info()
         result = {
             'device_info': self.device_info,
-            'basic': safe_read('basic', self.read_basic),
-            'pedal': safe_read('pedal', self.read_pedal),
-            'throttle': safe_read('throttle', self.read_throttle),
-            'live_data': safe_read('live_data', self.read_live_data, required=False),
-            'errors': safe_read('errors', self.read_errors, required=False),
+            'basic': basic,
+            'pedal': pedal,
+            'throttle': throttle,
+            'live_data': live_data,
+            'errors': errors,
             'read_errors': read_errors,
             'read_warnings': read_warnings,
             'section_meta': self._section_meta,
@@ -740,13 +941,13 @@ class BafangUART:
                 pedal_type=self._pick(["None", "DH-Sensor-12", "BB-Sensor-32", "DoubleSignal-24"], data[0]),
                 designated_assist=data[1],
                 speed_limit=data[2],
-                circumference=data[3],
+                circumference=0,
                 signal_number=data[5],
                 start_pulse=data[3],
                 torque_gain=data[4],
-                torque_offset=data[7],
+                torque_offset=data[7] * 10,
                 torque_step=data[8],
-                cadence_gain=data[9],
+                cadence_gain=data[9] * 10,
                 cadence_min=data[10],
                 cadence_max=data[10],
                 pedal_start_current=data[3],
@@ -945,12 +1146,13 @@ class BafangUART:
                 self._clamp(params.get('low_battery_voltage', 28), 1, 60, 28),
                 self._clamp(params.get('max_current', 16), 1, 100, 16),
             ])
+            levels = params.get('assist_levels', [])
             for i in range(10):
-                levels = params.get('assist_levels', [])
                 cmd += bytes([self._clamp(levels[i]['current_percent'] if i < len(levels) else params.get(f'assist_current_{i}', 100), 0, 100, 100)])
+            for i in range(10):
                 cmd += bytes([self._clamp(levels[i]['speed_percent'] if i < len(levels) else params.get(f'assist_speed_{i}', 100), 0, 100, 100)])
             cmd += bytes([
-                self._clamp(params.get('wheel_size_code', 4), 0, 255, 4),
+                self._clamp(params.get('wheel_diameter_x2', self._wheel_diameter_from_code(params.get('wheel_size_code', 4)) * 2), 0, 255, 56),
                 ((self._clamp(params.get('speedometer_type_code', 1), 0, 2, 1) & 0b11) << 6) | (self._clamp(params.get('speedometer_signals', 1), 0, 63, 1) & 0b111111),
             ])
             return cmd + bytes([self._calculate_bafang_write_checksum(cmd)])
@@ -1265,14 +1467,14 @@ class BafangUART:
         )
 
     def read_errors(self) -> Optional['BafangUART.Errors']:
-        cmd = bytes([0x11, 0x1A])
+        cmd = bytes([0x14, 0x15])
         response = self._send_command(cmd)
 
         if not response:
             return None
 
         payload = self._payload(response)
-        if len(payload) < 3:
+        if len(payload) < 1:
             return None
 
         error_codes = {
@@ -1288,8 +1490,8 @@ class BafangUART:
         return self.Errors(
             system_status=error_codes.get(payload[0], "Neznámý"),
             error_code=payload[0],
-            controller_fw=payload[1],
-            motor_fw=payload[2],
+            controller_fw=payload[1] if len(payload) > 1 else 0,
+            motor_fw=payload[2] if len(payload) > 2 else 0,
             raw_bytes=list(response)
         )
 

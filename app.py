@@ -2,6 +2,8 @@ import logging
 import os
 import json
 import hashlib
+import threading
+import time
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, Response
@@ -18,6 +20,96 @@ PROFILES_FILE = 'profiles.json'
 controller = None
 
 
+def to_jsonable(value):
+    if is_dataclass(value):
+        return asdict(value)
+    if isinstance(value, dict):
+        return {key: to_jsonable(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [to_jsonable(item) for item in value]
+    return value
+
+
+class LiveDataService:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = None
+        self._latest = None
+        self._last_error = None
+        self._last_update = None
+        self._failure_count = 0
+        self._interval = 0.5
+
+    def start(self, interval: float = 0.5):
+        with self._lock:
+            self._interval = max(0.25, min(float(interval or 0.5), 5.0))
+            if self._thread and self._thread.is_alive():
+                return
+            self._stop.clear()
+            self._thread = threading.Thread(target=self._run, name='BafangLiveData', daemon=True)
+            self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        thread = self._thread
+        if thread and thread.is_alive():
+            thread.join(timeout=1.0)
+        with self._lock:
+            self._thread = None
+
+    def reset(self):
+        self.stop()
+        with self._lock:
+            self._latest = None
+            self._last_error = None
+            self._last_update = None
+            self._failure_count = 0
+
+    def _run(self):
+        while not self._stop.is_set():
+            current_controller = controller
+            if not current_controller or not current_controller.connected:
+                with self._lock:
+                    self._last_error = 'Not connected'
+                self._stop.wait(self._interval)
+                continue
+            try:
+                data = current_controller.read_live_data()
+                with self._lock:
+                    if data is not None:
+                        self._latest = to_jsonable(data)
+                        self._last_error = None
+                        self._last_update = time.time()
+                        self._failure_count = 0
+                    else:
+                        self._failure_count += 1
+                        self._last_error = 'No live data response'
+            except Exception as e:
+                logger.warning('Live data read failed: %s', e)
+                with self._lock:
+                    self._failure_count += 1
+                    self._last_error = str(e)
+            self._stop.wait(self._interval)
+
+    def status(self):
+        thread = self._thread
+        with self._lock:
+            age = None if self._last_update is None else max(0.0, time.time() - self._last_update)
+            return {
+                'running': bool(thread and thread.is_alive()),
+                'latest': self._latest,
+                'last_error': self._last_error,
+                'last_update': self._last_update,
+                'age': age,
+                'failure_count': self._failure_count,
+                'interval': self._interval,
+            }
+
+
+live_service = LiveDataService()
+
+
 def _api_error_response(message: str, status_code: int, exception_type: str | None = None):
     payload = {'success': False, 'error': message}
     if exception_type:
@@ -26,16 +118,7 @@ def _api_error_response(message: str, status_code: int, exception_type: str | No
 
 
 def api_json(data, status_code: int = 200):
-    def convert(value):
-        if is_dataclass(value):
-            return asdict(value)
-        if isinstance(value, dict):
-            return {key: convert(val) for key, val in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [convert(item) for item in value]
-        return value
-
-    response = jsonify(convert(data))
+    response = jsonify(to_jsonable(data))
     return (response, status_code) if status_code != 200 else response
 
 
@@ -124,6 +207,7 @@ def connect():
         return jsonify({'success': False, 'error': 'No port selected'}), 400
     
     if controller and controller.connected:
+        live_service.reset()
         controller.disconnect()
     
     controller = BafangUART(port)
@@ -134,6 +218,7 @@ def connect():
 @app.route('/api/disconnect', methods=['POST'])
 def disconnect():
     global controller
+    live_service.reset()
     if controller:
         controller.disconnect()
     return jsonify({'success': True})
@@ -175,6 +260,24 @@ def write_throttle():
 @require_connection
 def live_data():
     return api_json(get_controller().read_live_data() or {})
+
+@app.route('/api/live/start', methods=['POST'])
+@require_connection
+def live_start():
+    payload = request.json or {}
+    live_service.start(payload.get('interval', 0.5))
+    return jsonify({'success': True, **live_service.status()})
+
+@app.route('/api/live/stop', methods=['POST'])
+@require_connection
+def live_stop():
+    live_service.stop()
+    return jsonify({'success': True, **live_service.status()})
+
+@app.route('/api/live/status')
+@require_connection
+def live_status():
+    return jsonify(live_service.status())
 
 @app.route('/api/errors')
 @require_connection

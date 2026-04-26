@@ -11,8 +11,10 @@ import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.hardware.usb.UsbConstants;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
+import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -32,6 +34,7 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
+import com.hoho.android.usbserial.driver.CdcAcmSerialDriver;
 import com.hoho.android.usbserial.driver.UsbSerialDriver;
 import com.hoho.android.usbserial.driver.UsbSerialPort;
 import com.hoho.android.usbserial.driver.UsbSerialProber;
@@ -409,6 +412,11 @@ public class MainActivity extends Activity {
     private void scanPorts() {
         drivers.clear();
         drivers.addAll(UsbSerialProber.getDefaultProber().findAllDrivers(usbManager));
+        for (UsbDevice device : usbManager.getDeviceList().values()) {
+            if (!hasDriverFor(device) && looksLikeCdcAcm(device)) {
+                drivers.add(new CdcAcmSerialDriver(device));
+            }
+        }
         portAdapter.clear();
         for (UsbSerialDriver driver : drivers) {
             UsbDevice device = driver.getDevice();
@@ -420,6 +428,29 @@ public class MainActivity extends Activity {
         } else {
             updateStatus("Porty nalezeny: " + drivers.size(), "Vyberte port a pokračujte připojením k řadiči.", COLOR_PRIMARY);
         }
+    }
+
+    private boolean hasDriverFor(UsbDevice device) {
+        for (UsbSerialDriver driver : drivers) {
+            if (driver.getDevice().getDeviceId() == device.getDeviceId()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean looksLikeCdcAcm(UsbDevice device) {
+        if (device.getDeviceClass() == UsbConstants.USB_CLASS_COMM) {
+            return true;
+        }
+        for (int i = 0; i < device.getInterfaceCount(); i++) {
+            UsbInterface usbInterface = device.getInterface(i);
+            if (usbInterface.getInterfaceClass() == UsbConstants.USB_CLASS_COMM
+                    || usbInterface.getInterfaceClass() == UsbConstants.USB_CLASS_CDC_DATA) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void connectSelected() {
@@ -457,9 +488,10 @@ public class MainActivity extends Activity {
                 serialPort = driver.getPorts().get(0);
                 serialPort.open(connection);
                 serialPort.setParameters(BafangProtocol.BAUD_RATE, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE);
+                serialPort.purgeHwBuffers(true, true);
                 try {
-                    serialPort.setDTR(true);
-                    serialPort.setRTS(true);
+                    serialPort.setDTR(false);
+                    serialPort.setRTS(false);
                 } catch (UnsupportedOperationException ignored) {
                 }
                 PyObject bridgeClass = Python.getInstance().getModule("android_bridge").get("AndroidBafangController");

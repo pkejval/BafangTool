@@ -19,6 +19,9 @@ class AndroidSerialTransport:
         data = self.java_port.readBytes(size)
         return bytes((int(value) & 0xFF for value in data))
 
+    def reset_input_buffer(self):
+        self.java_port.purgeInput()
+
     def close(self):
         self.is_open = False
         self.java_port.closePort()

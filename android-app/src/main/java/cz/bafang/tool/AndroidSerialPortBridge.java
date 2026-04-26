@@ -27,6 +27,10 @@ final class AndroidSerialPortBridge {
         return out;
     }
 
+    public void purgeInput() throws IOException {
+        port.purgeHwBuffers(true, false);
+    }
+
     public void closePort() throws IOException {
         if (open) {
             open = false;
