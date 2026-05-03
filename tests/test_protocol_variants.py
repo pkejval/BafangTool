@@ -1,3 +1,4 @@
+import time
 from bafang.protocol import BafangUART
 
 
@@ -209,3 +210,81 @@ def test_bafang_write_packets_match_open_bafang_tool_bytes():
     assert pedal_cmd == bytes.fromhex("16 53 0B 02 FF FF 1E 05 04 0A 19 04 00 1E CA")
     assert throttle_cmd == bytes.fromhex("16 54 06 03 03 01 FF 20 0A 8A")
     assert serial_cmd == bytes.fromhex("17 01 0C 32 30 31 36 30 38 30 38 30 30 30 31 67")
+
+
+def test_bafang_basic_rejects_unsupported_gui_field():
+    uart = BafangUART(port="COM_TEST")
+    uart._section_meta = {"basic": {"variant": "bafang", "safe_to_write": True}}
+    uart._initial_snapshot = {"basic": {"low_battery_voltage": 41, "speed_limit": 25}}
+    uart._allowed_keys = {"basic": {"low_battery_voltage", "speed_limit"}}
+
+    result = uart.write_basic({"speed_limit": 30})
+
+    assert result["success"] is False
+    assert result["exception_type"] == "UnsupportedWriteField"
+    assert result["unsupported_fields"] == ["speed_limit"]
+
+
+def test_write_basic_verifies_read_back_before_success():
+    class VerifyUart(BafangUART):
+        def __init__(self):
+            super().__init__(port="COM_TEST")
+            self._section_meta = {"basic": {"variant": "bafang", "safe_to_write": True}}
+            base = {
+                "low_battery_voltage": 41,
+                "max_current": 12,
+                "wheel_size_code": 4,
+                "speedometer_type_code": 0,
+                "speedometer_signals": 1,
+            }
+            for i in range(10):
+                base[f"assist_current_{i}"] = 100
+                base[f"assist_speed_{i}"] = 100
+            self._initial_snapshot = {"basic": dict(base)}
+            self._allowed_keys = {"basic": set(base)}
+
+        def _send_command(self, cmd, wait_response=True, timeout=0.6):
+            return bytes([0x52, 0x18, 0x6A])
+
+        def read_basic(self, use_cache=True):
+            params = self.BasicParameters(low_battery_voltage=42, max_current=12)
+            params.assist_levels = [{'level': i, 'current_percent': 100, 'speed_percent': 100} for i in range(10)]
+            params.wheel_size_code = 4
+            params.speedometer_type_code = 0
+            params.speedometer_signals = 1
+            params.protocol_variant = "bafang"
+            return params
+
+    uart = VerifyUart()
+
+    result = uart.write_basic({"low_battery_voltage": 42})
+
+    assert result["success"] is True
+    assert result["verified"] is True
+    assert uart._initial_snapshot["basic"]["low_battery_voltage"] == 42
+
+
+def test_command_queue_serializes_direct_commands():
+    class QueueUart(BafangUART):
+        def __init__(self):
+            super().__init__(port="COM_TEST")
+            self.serial = object()
+            self.calls = []
+
+        def _serial_is_open(self):
+            return True
+
+        def _send_command_direct(self, cmd, wait_response=True, timeout=0.6):
+            self.calls.append((bytes(cmd), time.monotonic()))
+            time.sleep(0.02)
+            return bytes([cmd[1], 0x00, cmd[1]])
+
+    uart = QueueUart()
+    uart._start_command_worker()
+    first = uart._send_command(bytes([0x11, 0x52]))
+    second = uart._send_command(bytes([0x11, 0x53]))
+    uart._stop_command_worker()
+
+    assert first[0] == 0x52
+    assert second[0] == 0x53
+    assert [call[0] for call in uart.calls] == [bytes([0x11, 0x52]), bytes([0x11, 0x53])]

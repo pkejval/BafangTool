@@ -625,41 +625,41 @@
                         </select>
                     </div>
                     <div class="param-item">
-                        <label>Signal Number</label>
+                        <label>Signals before start</label>
                         <input type="number" id="pedal_signal_number" min="1" max="24" value="6">
                     </div>
                     <div class="param-item">
-                        <label>Start Pulse</label>
+                        <label>Start current (%)</label>
                         <input type="number" id="pedal_start_pulse" min="0" max="255" value="20">
                     </div>
                 </div>
                 <div class="param-group">
-                    <h4>Torque</h4>
+                    <h4>Start/stop</h4>
                     <div class="param-item">
-                        <label>Gain</label>
+                        <label>Slow start mode</label>
                         <input type="number" id="pedal_torque_gain" min="0" max="255" value="10">
                     </div>
                     <div class="param-item">
-                        <label>Offset</label>
+                        <label>Time to stop (ms)</label>
                         <input type="number" id="pedal_torque_offset" min="0" max="255" value="25">
                     </div>
                     <div class="param-item">
-                        <label>Step</label>
+                        <label>Current decay</label>
                         <input type="number" id="pedal_torque_step" min="0" max="255" value="8">
                     </div>
                 </div>
                 <div class="param-group">
-                    <h4>Cadence</h4>
+                    <h4>Keep current</h4>
                     <div class="param-item">
-                        <label>Gain</label>
+                        <label>Stop decay (ms)</label>
                         <input type="number" id="pedal_cadence_gain" min="0" max="255" value="20">
                     </div>
                     <div class="param-item">
-                        <label>Min</label>
+                        <label>Keep current (%)</label>
                         <input type="number" id="pedal_cadence_min" min="0" max="255" value="20">
                     </div>
                     <div class="param-item">
-                        <label>Max</label>
+                        <label>Reserved</label>
                         <input type="number" id="pedal_cadence_max" min="0" max="255" value="20">
                     </div>
                 </div>
@@ -899,6 +899,16 @@
             'Pedálový sensor': 'Pedal sensor',
             'Sensor': 'Sensor',
             'Typ': 'Type',
+            'Signals before start': 'Signals before start',
+            'Start current (%)': 'Start current (%)',
+            'Start/stop': 'Start/stop',
+            'Slow start mode': 'Slow start mode',
+            'Time to stop (ms)': 'Time to stop (ms)',
+            'Current decay': 'Current decay',
+            'Keep current': 'Keep current',
+            'Stop decay (ms)': 'Stop decay (ms)',
+            'Keep current (%)': 'Keep current (%)',
+            'Reserved': 'Reserved',
             'Throttle': 'Throttle',
             'Napětí': 'Voltage',
             'Proud': 'Current',
@@ -1027,7 +1037,29 @@
                 pedal: !!pedalMeta.safe_to_write,
                 throttle: !!throttleMeta.safe_to_write,
             };
+            updateFieldSupport(sectionMeta);
             updateWriteButtonsState();
+        }
+
+        function setFieldsDisabled(ids, disabled) {
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.disabled = disabled || !isConnected;
+                    el.title = disabled ? 'Toto pole není zapisovatelné pro detekovanou Bafang UART variantu.' : '';
+                }
+            });
+        }
+
+        function updateFieldSupport(sectionMeta) {
+            const unsupportedBasicBafang = [
+                'basic_speed_limit', 'basic_wheel_circumference', 'basic_assist_level',
+                'basic_start_current', 'basic_current_ramp', 'basic_throttle_enabled',
+                'basic_throttle_start_voltage', 'basic_throttle_end_voltage', 'basic_temp_sensor_type'
+            ];
+            const unsupportedThrottleBafang = ['throttle_enabled'];
+            setFieldsDisabled(unsupportedBasicBafang, sectionMeta.basic?.variant === 'bafang');
+            setFieldsDisabled(unsupportedThrottleBafang, sectionMeta.throttle?.variant === 'bafang');
         }
         
         function init() {
@@ -1338,31 +1370,31 @@
         }
         
         function getPedalParams() {
-            const signalNumber = parseInt(document.getElementById('pedal_signal_number').value);
-            const startPulse = parseInt(document.getElementById('pedal_start_pulse').value);
-            const torqueGain = parseInt(document.getElementById('pedal_torque_gain').value);
-            const torqueOffset = parseInt(document.getElementById('pedal_torque_offset').value);
-            const torqueStep = parseInt(document.getElementById('pedal_torque_step').value);
-            const cadenceGain = parseInt(document.getElementById('pedal_cadence_gain').value);
-            const cadenceMin = parseInt(document.getElementById('pedal_cadence_min').value);
-            const cadenceMax = parseInt(document.getElementById('pedal_cadence_max').value);
+            const signalsBeforeStart = parseInt(document.getElementById('pedal_signal_number').value);
+            const startCurrent = parseInt(document.getElementById('pedal_start_pulse').value);
+            const slowStartMode = parseInt(document.getElementById('pedal_torque_gain').value);
+            const timeToStop = parseInt(document.getElementById('pedal_torque_offset').value);
+            const currentDecay = parseInt(document.getElementById('pedal_torque_step').value);
+            const stopDecay = parseInt(document.getElementById('pedal_cadence_gain').value);
+            const keepCurrent = parseInt(document.getElementById('pedal_cadence_min').value);
+            const reserved = parseInt(document.getElementById('pedal_cadence_max').value);
             return {
                 pedal_type: document.getElementById('pedal_pedal_type').value,
-                signal_number: signalNumber,
-                start_pulse: startPulse,
-                torque_gain: torqueGain,
-                torque_offset: torqueOffset,
-                torque_step: torqueStep,
-                cadence_gain: cadenceGain,
-                cadence_min: cadenceMin,
-                cadence_max: cadenceMax,
-                pedal_start_current: startPulse,
-                pedal_slow_start_mode: torqueGain,
-                pedal_signals_before_start: signalNumber,
-                pedal_time_to_stop: torqueOffset,
-                pedal_current_decay: torqueStep,
-                pedal_stop_decay: cadenceGain,
-                pedal_keep_current: cadenceMin,
+                signal_number: signalsBeforeStart,
+                start_pulse: startCurrent,
+                torque_gain: slowStartMode,
+                torque_offset: timeToStop,
+                torque_step: currentDecay,
+                cadence_gain: stopDecay,
+                cadence_min: keepCurrent,
+                cadence_max: reserved,
+                pedal_start_current: startCurrent,
+                pedal_slow_start_mode: slowStartMode,
+                pedal_signals_before_start: signalsBeforeStart,
+                pedal_time_to_stop: timeToStop,
+                pedal_current_decay: currentDecay,
+                pedal_stop_decay: stopDecay,
+                pedal_keep_current: keepCurrent,
                 work_mode: 10
             };
         }

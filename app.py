@@ -129,6 +129,12 @@ def api_json(data, status_code: int = 200):
     return (response, status_code) if status_code != 200 else response
 
 
+def api_success(data=None, **extra):
+    payload = {'success': True, 'data': to_jsonable(data) if data is not None else None, 'error': None}
+    payload.update(extra)
+    return jsonify(payload)
+
+
 @app.errorhandler(HTTPException)
 def handle_http_exception(e: HTTPException):
     logger.warning('HTTP error path=%s method=%s status=%s error=%s', request.path, request.method, e.code, e)
@@ -266,8 +272,17 @@ def disconnect():
 @app.route('/api/status')
 def status():
     if controller and controller.connected:
-        return jsonify({'connected': True, 'port': controller.port, 'device_info': controller.device_info})
-    return jsonify({'connected': False})
+        return jsonify({'connected': True, 'port': controller.port, 'state': controller.state, 'last_error': controller.last_error, 'device_info': controller.device_info})
+    return jsonify({'connected': False, 'state': controller.state if controller else 'DISCONNECTED'})
+
+@app.route('/api/diagnostics')
+@require_connection
+def diagnostics():
+    return api_success({
+        'controller': get_controller().diagnostic_snapshot(),
+        'live': live_service.status(),
+        'unsafe_enabled': UNSAFE_ENABLED,
+    })
 
 @app.route('/api/read')
 @require_connection

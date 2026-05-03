@@ -49,6 +49,12 @@ class BafangUART:
     }
     
     _CACHE_TTL = 2.0
+    STATE_DISCONNECTED = 'DISCONNECTED'
+    STATE_OPENING = 'OPENING'
+    STATE_HANDSHAKING = 'HANDSHAKING'
+    STATE_READY = 'READY'
+    STATE_BUSY = 'BUSY'
+    STATE_ERROR = 'ERROR'
 
     @dataclass
     class BasicParameters:
@@ -148,6 +154,8 @@ class BafangUART:
         self.serial = serial_transport
         self._external_serial = serial_transport is not None
         self.connected = False
+        self.state = self.STATE_DISCONNECTED
+        self.last_error: Optional[str] = None
         self.device_info: Dict[str, Any] = {}
         self._cache: Dict[str, Tuple[float, Any]] = {}
         self._last_read: Dict[str, bytes] = {}
@@ -167,6 +175,7 @@ class BafangUART:
 
     def connect(self) -> bool:
         try:
+            self._set_state(self.STATE_OPENING)
             logger.info('Opening Bafang UART port=%s baudrate=%d data=%d parity=%s stop=%d', self.port, BAUDRATE, DATA_BITS, PARITY, STOP_BITS)
             if self.serial is None:
                 if serial is None:
@@ -184,15 +193,19 @@ class BafangUART:
             self._start_command_worker()
             time.sleep(REQUEST_SPACING)
             
+            self._set_state(self.STATE_HANDSHAKING)
             if self._connect_cmd():
                 self.connected = True
+                self._set_state(self.STATE_READY)
                 logger.info('Bafang UART connected port=%s device_info=%s', self.port, self.device_info)
                 return True
             logger.error('Bafang UART handshake failed port=%s', self.port)
+            self._set_state(self.STATE_ERROR, 'Handshake failed')
             self._stop_command_worker()
             return False
         except Exception as e:
             logger.exception('Bafang UART connection exception port=%s', self.port)
+            self._set_state(self.STATE_ERROR, str(e))
             self._stop_command_worker()
             return False
 
@@ -205,6 +218,7 @@ class BafangUART:
         if self._external_serial:
             self.serial = None
         self.connected = False
+        self._set_state(self.STATE_DISCONNECTED)
         self._cache.clear()
         self._last_read.clear()
         self._initial_snapshot.clear()
@@ -266,13 +280,23 @@ class BafangUART:
                 self._command_queue.task_done()
                 break
             try:
+                self._set_state(self.STATE_BUSY)
                 item.response = self._send_command_direct(item.cmd, item.wait_response, item.timeout)
             except BaseException as exc:
                 item.exception = exc
                 logger.exception('UART command worker exception port=%s cmd=%s', self.port, item.cmd.hex(' '))
             finally:
+                if self.connected and self.state != self.STATE_ERROR:
+                    self._set_state(self.STATE_READY)
                 item.done.set()
                 self._command_queue.task_done()
+
+    def _set_state(self, state: str, error: Optional[str] = None):
+        self.state = state
+        if error is not None:
+            self.last_error = error
+        elif state != self.STATE_ERROR:
+            self.last_error = None
 
     def _reader_loop(self):
         while not self._reader_stop.is_set():
@@ -582,6 +606,110 @@ class BafangUART:
                 'warning': meta.get('warning'),
             }
         return None
+
+    def diagnostic_snapshot(self) -> Dict[str, Any]:
+        return {
+            'port': self.port,
+            'connected': self.connected,
+            'state': self.state,
+            'last_error': self.last_error,
+            'device_info': dict(self.device_info),
+            'section_meta': dict(self._section_meta),
+            'last_read_hex': {key: value.hex() for key, value in self._last_read.items()},
+            'cache_keys': list(self._cache.keys()),
+            'queue_size': self._command_queue.qsize(),
+            'reader_alive': bool(self._reader_thread and self._reader_thread.is_alive()),
+            'command_worker_alive': bool(self._command_worker_thread and self._command_worker_thread.is_alive()),
+        }
+
+    def _writable_keys_for_section(self, section: str) -> set:
+        variant = self._section_meta.get(section, {}).get('variant', 'native')
+        if section == 'basic' and variant == 'bafang':
+            keys = {'low_battery_voltage', 'max_current', 'wheel_size_code', 'wheel_diameter_x2', 'speedometer_type_code', 'speedometer_signals'}
+            for i in range(10):
+                keys.add(f'assist_current_{i}')
+                keys.add(f'assist_speed_{i}')
+            return keys
+        if section == 'throttle' and variant == 'bafang':
+            return {'start_voltage', 'end_voltage', 'throttle_mode', 'mode', 'throttle_assist_level', 'assist_level', 'designated_assist', 'throttle_speed_limit', 'speed_limit', 'throttle_start_current', 'start_current'}
+        return self._allowed_keys.get(section, set())
+
+    def _validate_range(self, section: str, key: str, value: Any) -> Optional[str]:
+        if key == 'pedal_type':
+            if value not in {'None', 'DH-Sensor-12', 'BB-Sensor-32', 'DoubleSignal-24'}:
+                return f'{key} has unsupported value {value!r}.'
+            return None
+        if isinstance(value, bool):
+            return None
+        if not isinstance(value, int):
+            return f'{key} must be an integer.'
+        ranges = {
+            'low_battery_voltage': (1, 60),
+            'max_current': (1, 100),
+            'speed_limit': (0, 100),
+            'wheel_size_code': (0, 8),
+            'wheel_diameter_x2': (0, 255),
+            'speedometer_type_code': (0, 2),
+            'speedometer_signals': (0, 63),
+            'start_voltage': (0, 5000),
+            'end_voltage': (0, 5000),
+            'throttle_mode': (0, 1),
+            'mode': (0, 255),
+            'throttle_start_current': (0, 255),
+            'start_current': (0, 255),
+            'pedal_time_to_stop': (0, 2550),
+            'pedal_stop_decay': (0, 2550),
+            'pedal_keep_current': (0, 100),
+        }
+        for prefix in ('assist_current_', 'assist_speed_'):
+            if key.startswith(prefix):
+                ranges[key] = (0, 100)
+        low, high = ranges.get(key, (0, 255))
+        if value < low or value > high:
+            return f'{key}={value} is outside allowed range {low}-{high}.'
+        if key in ('start_voltage', 'end_voltage', 'throttle_start_voltage', 'throttle_end_voltage') and value % 100 != 0:
+            return f'{key} must be divisible by 100 mV because Bafang UART stores voltage in 100 mV steps.'
+        return None
+
+    def _validate_changed(self, section: str, changed: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        writable = self._writable_keys_for_section(section)
+        unsupported = sorted(key for key in changed if key not in writable)
+        if unsupported:
+            return {
+                'success': False,
+                'error': f'Unsupported {section} fields for variant {self._section_meta.get(section, {}).get("variant", "unknown")}: {", ".join(unsupported)}',
+                'code': None,
+                'exception_type': 'UnsupportedWriteField',
+                'unsupported_fields': unsupported,
+            }
+        for key, value in changed.items():
+            issue = self._validate_range(section, key, value)
+            if issue:
+                return {'success': False, 'error': issue, 'code': None, 'exception_type': 'ValidationError'}
+        return None
+
+    def _verify_write(self, section: str, changed: Dict[str, Any]) -> Dict[str, Any]:
+        readers = {
+            'basic': lambda: self._basic_to_writable(self.read_basic(use_cache=False)),
+            'pedal': lambda: self._pedal_to_writable(self.read_pedal(use_cache=False)),
+            'throttle': lambda: self._throttle_to_writable(self.read_throttle(use_cache=False)),
+        }
+        try:
+            latest = readers[section]()
+        except Exception:
+            logger.exception('Read-after-write verification failed section=%s', section)
+            return {'verified': False, 'verification_error': 'Read-after-write failed'}
+
+        mismatches = {}
+        for key, expected in changed.items():
+            actual = latest.get(key)
+            if actual != expected:
+                mismatches[key] = {'expected': expected, 'actual': actual}
+        if mismatches:
+            logger.error('Read-after-write mismatch section=%s mismatches=%s', section, mismatches)
+            return {'verified': False, 'verification_error': 'Controller did not confirm written values', 'mismatches': mismatches}
+        self._initial_snapshot[section].update(changed)
+        return {'verified': True}
 
     def _clamp(self, value: Any, lower: int, upper: int, default: int) -> int:
         try:
@@ -1394,6 +1522,9 @@ class BafangUART:
         changed = self._changed_only('basic', params)
         if not changed:
             return {'success': True, 'error': None, 'code': None, 'skipped': True, 'message': 'Žádné změněné parametry.'}
+        validation = self._validate_changed('basic', changed)
+        if validation is not None:
+            return validation
 
         merged = dict(self._initial_snapshot['basic'])
         merged.update(changed)
@@ -1409,8 +1540,10 @@ class BafangUART:
         expected_ok = 0x18 if variant == 'bafang' else 0x24
         if result_code == expected_ok:
             self._invalidate_cache('basic', 'all_params')
-            self._initial_snapshot['basic'].update(changed)
-            return {'success': True, 'error': None, 'code': result_code}
+            verification = self._verify_write('basic', changed)
+            if not verification.get('verified'):
+                return {'success': False, 'error': verification.get('verification_error', 'Read-after-write verification failed'), 'code': result_code, **verification}
+            return {'success': True, 'error': None, 'code': result_code, **verification}
         
         error_messages = {
             0x00: "Low Battery Protect - chybné nastavení",
@@ -1459,6 +1592,9 @@ class BafangUART:
         changed = self._changed_only('pedal', params)
         if not changed:
             return {'success': True, 'error': None, 'code': None, 'skipped': True, 'message': 'Žádné změněné parametry.'}
+        validation = self._validate_changed('pedal', changed)
+        if validation is not None:
+            return validation
 
         merged = dict(self._initial_snapshot['pedal'])
         merged.update(changed)
@@ -1472,8 +1608,10 @@ class BafangUART:
         
         if result_code == 0x0B:
             self._invalidate_cache('pedal', 'all_params')
-            self._initial_snapshot['pedal'].update(changed)
-            return {'success': True, 'error': None, 'code': result_code}
+            verification = self._verify_write('pedal', changed)
+            if not verification.get('verified'):
+                return {'success': False, 'error': verification.get('verification_error', 'Read-after-write verification failed'), 'code': result_code, **verification}
+            return {'success': True, 'error': None, 'code': result_code, **verification}
         
         error_messages = {
             0x00: "Pedal Type - neplatný typ sensoru",
@@ -1507,6 +1645,9 @@ class BafangUART:
         changed = self._changed_only('throttle', params)
         if not changed:
             return {'success': True, 'error': None, 'code': None, 'skipped': True, 'message': 'Žádné změněné parametry.'}
+        validation = self._validate_changed('throttle', changed)
+        if validation is not None:
+            return validation
 
         merged = dict(self._initial_snapshot['throttle'])
         merged.update(changed)
@@ -1520,8 +1661,10 @@ class BafangUART:
         
         if result_code == 0x06:
             self._invalidate_cache('throttle', 'all_params')
-            self._initial_snapshot['throttle'].update(changed)
-            return {'success': True, 'error': None, 'code': result_code}
+            verification = self._verify_write('throttle', changed)
+            if not verification.get('verified'):
+                return {'success': False, 'error': verification.get('verification_error', 'Read-after-write verification failed'), 'code': result_code, **verification}
+            return {'success': True, 'error': None, 'code': result_code, **verification}
         
         error_messages = {
             0x00: "Start Voltage - neplatné startovní napětí",
