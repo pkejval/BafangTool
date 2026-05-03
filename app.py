@@ -20,6 +20,7 @@ app = Flask(__name__)
 app.secret_key = 'BafangTool-secret-key'
 
 PROFILES_FILE = 'profiles.json'
+UNSAFE_ENABLED = os.environ.get('BAFANGTOOL_ENABLE_UNSAFE', '').lower() in {'1', 'true', 'yes', 'on'}
 controller = None
 
 
@@ -179,6 +180,29 @@ def get_controller() -> BafangUART:
     return controller
 
 
+def require_unsafe_enabled():
+    if UNSAFE_ENABLED:
+        return None
+    logger.warning('Rejected unsafe API request path=%s method=%s', request.path, request.method)
+    return _api_error_response('Unsafe operation is disabled. Set BAFANGTOOL_ENABLE_UNSAFE=1 to enable it.', 403, 'UnsafeOperationDisabled')
+
+
+def run_with_live_paused(action: str, callback):
+    status = live_service.status()
+    was_running = bool(status.get('running'))
+    interval = status.get('interval', 0.5)
+    if was_running:
+        logger.info('Pausing live data before %s', action)
+        live_service.stop()
+    try:
+        return callback()
+    finally:
+        current_controller = controller
+        if was_running and current_controller and current_controller.connected:
+            logger.info('Resuming live data after %s', action)
+            live_service.start(interval)
+
+
 def get_controller_binding() -> dict:
     info = get_controller().device_info or {}
     identity = {
@@ -256,7 +280,7 @@ def read_params():
 def write_params():
     data = request.json or {}
     logger.info('Writing all parameter sections keys=%s', sorted(data.keys()))
-    result = get_controller().write_all(data.get('basic', {}), data.get('pedal', {}), data.get('throttle', {}))
+    result = run_with_live_paused('write_all', lambda: get_controller().write_all(data.get('basic', {}), data.get('pedal', {}), data.get('throttle', {})))
     if not result.get('success', False):
         logger.error('Write all failed result=%s', result)
     return jsonify(result)
@@ -264,7 +288,7 @@ def write_params():
 @app.route('/api/write_basic', methods=['POST'])
 @require_connection
 def write_basic():
-    result = get_controller().write_basic(request.json or {})
+    result = run_with_live_paused('write_basic', lambda: get_controller().write_basic(request.json or {}))
     if not result.get('success', False):
         logger.error('Write basic failed result=%s', result)
     return jsonify(result)
@@ -272,7 +296,7 @@ def write_basic():
 @app.route('/api/write_pedal', methods=['POST'])
 @require_connection
 def write_pedal():
-    result = get_controller().write_pedal(request.json or {})
+    result = run_with_live_paused('write_pedal', lambda: get_controller().write_pedal(request.json or {}))
     if not result.get('success', False):
         logger.error('Write pedal failed result=%s', result)
     return jsonify(result)
@@ -280,7 +304,7 @@ def write_pedal():
 @app.route('/api/write_throttle', methods=['POST'])
 @require_connection
 def write_throttle():
-    result = get_controller().write_throttle(request.json or {})
+    result = run_with_live_paused('write_throttle', lambda: get_controller().write_throttle(request.json or {}))
     if not result.get('success', False):
         logger.error('Write throttle failed result=%s', result)
     return jsonify(result)
@@ -316,12 +340,18 @@ def errors():
 @app.route('/api/torque_calibration', methods=['POST'])
 @require_connection
 def torque_calibration():
-    return jsonify({'success': get_controller().torque_calibration()})
+    unsafe_response = require_unsafe_enabled()
+    if unsafe_response:
+        return unsafe_response
+    return jsonify({'success': run_with_live_paused('torque_calibration', lambda: get_controller().torque_calibration())})
 
 @app.route('/api/reset', methods=['POST'])
 @require_connection
 def reset():
-    return jsonify({'success': get_controller().reset_to_defaults()})
+    unsafe_response = require_unsafe_enabled()
+    if unsafe_response:
+        return unsafe_response
+    return jsonify({'success': run_with_live_paused('reset_to_defaults', lambda: get_controller().reset_to_defaults())})
 
 @app.route('/api/config_version')
 @require_connection
@@ -331,12 +361,18 @@ def config_version():
 @app.route('/api/wheel_circumference', methods=['POST'])
 @require_connection
 def wheel_circumference():
+    unsafe_response = require_unsafe_enabled()
+    if unsafe_response:
+        return unsafe_response
     payload = request.json or {}
-    return jsonify({'success': get_controller().set_wheel_circumference(payload.get('circumference', 2105))})
+    return jsonify({'success': run_with_live_paused('set_wheel_circumference', lambda: get_controller().set_wheel_circumference(payload.get('circumference', 2105)))})
 
 @app.route('/api/read_experimental')
 @require_connection
 def read_experimental():
+    unsafe_response = require_unsafe_enabled()
+    if unsafe_response:
+        return unsafe_response
     return jsonify(get_controller().read_experimental())
 
 @app.route('/api/read_raw_basic')
@@ -357,10 +393,13 @@ def read_raw_throttle():
 @app.route('/api/send_raw_command', methods=['POST'])
 @require_connection
 def send_raw_command():
+    unsafe_response = require_unsafe_enabled()
+    if unsafe_response:
+        return unsafe_response
     payload = request.json or {}
     command = payload.get('command', '')
     logger.info('Sending raw command command=%s', command)
-    result = get_controller().send_raw_command(command)
+    result = run_with_live_paused('send_raw_command', lambda: get_controller().send_raw_command(command))
     if not result:
         logger.error('Raw command returned no response command=%s', command)
     return jsonify(result or {'error': 'No response'})
@@ -368,10 +407,13 @@ def send_raw_command():
 @app.route('/api/write_custom_raw', methods=['POST'])
 @require_connection
 def write_custom_raw():
+    unsafe_response = require_unsafe_enabled()
+    if unsafe_response:
+        return unsafe_response
     payload = request.json or {}
     hex_data = payload.get('hex', '')
     logger.info('Sending custom raw write hex=%s', hex_data)
-    result = get_controller().write_custom_raw(hex_data)
+    result = run_with_live_paused('write_custom_raw', lambda: get_controller().write_custom_raw(hex_data))
     if not result:
         logger.error('Custom raw write returned no response hex=%s', hex_data)
     return jsonify(result or {'error': 'No response'})
@@ -379,6 +421,9 @@ def write_custom_raw():
 @app.route('/api/scan_commands')
 @require_connection
 def scan_commands():
+    unsafe_response = require_unsafe_enabled()
+    if unsafe_response:
+        return unsafe_response
     return jsonify(get_controller().scan_all_commands())
 
 @app.route('/api/profiles')
@@ -442,7 +487,7 @@ def apply_profile(name):
             'current_controller': current,
         }), 409
 
-    result = get_controller().write_all(config.get('basic', {}), config.get('pedal', {}), config.get('throttle', {}))
+    result = run_with_live_paused('apply_profile', lambda: get_controller().write_all(config.get('basic', {}), config.get('pedal', {}), config.get('throttle', {})))
     return jsonify(result)
 
 @app.route('/api/profiles/import', methods=['POST'])

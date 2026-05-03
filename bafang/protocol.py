@@ -5,6 +5,7 @@ except ImportError:
 import time
 import logging
 import threading
+import queue
 from collections import deque
 from typing import Optional, Dict, Any, Tuple, List
 from dataclasses import dataclass, field
@@ -24,6 +25,16 @@ class CommandDef:
     write_code: int = 0x16
     response_id: int = 0
     timeout: float = 0.15
+
+
+@dataclass
+class QueuedCommand:
+    cmd: bytes
+    wait_response: bool
+    timeout: float
+    done: threading.Event = field(default_factory=threading.Event)
+    response: Optional[bytes] = None
+    exception: Optional[BaseException] = None
 
 class BafangUART:
     COMMANDS = {
@@ -147,6 +158,9 @@ class BafangUART:
         self._rx_frames = deque(maxlen=64)
         self._rx_condition = threading.Condition()
         self._command_lock = threading.Lock()
+        self._command_queue: queue.Queue[Optional[QueuedCommand]] = queue.Queue()
+        self._command_worker_thread: Optional[threading.Thread] = None
+        self._command_worker_stop = threading.Event()
         self._last_command_at = 0.0
         self._reader_thread: Optional[threading.Thread] = None
         self._reader_stop = threading.Event()
@@ -167,6 +181,7 @@ class BafangUART:
                 )
             self._drain_input()
             self._start_reader()
+            self._start_command_worker()
             time.sleep(REQUEST_SPACING)
             
             if self._connect_cmd():
@@ -174,13 +189,16 @@ class BafangUART:
                 logger.info('Bafang UART connected port=%s device_info=%s', self.port, self.device_info)
                 return True
             logger.error('Bafang UART handshake failed port=%s', self.port)
+            self._stop_command_worker()
             return False
         except Exception as e:
             logger.exception('Bafang UART connection exception port=%s', self.port)
+            self._stop_command_worker()
             return False
 
     def disconnect(self):
         logger.info('Disconnecting Bafang UART port=%s connected=%s', self.port, self.connected)
+        self._stop_command_worker()
         self._stop_reader()
         if self.serial and self._serial_is_open():
             self.serial.close()
@@ -221,6 +239,40 @@ class BafangUART:
         if self._reader_thread and self._reader_thread.is_alive():
             self._reader_thread.join(timeout=0.5)
         self._reader_thread = None
+
+    def _start_command_worker(self):
+        if self._command_worker_thread and self._command_worker_thread.is_alive():
+            return
+        if not self.serial or not self._serial_is_open():
+            return
+        self._command_worker_stop.clear()
+        self._command_worker_thread = threading.Thread(target=self._command_worker_loop, name=f"BafangUARTQueue-{self.port}", daemon=True)
+        self._command_worker_thread.start()
+
+    def _stop_command_worker(self):
+        self._command_worker_stop.set()
+        if self._command_worker_thread and self._command_worker_thread.is_alive():
+            self._command_queue.put(None)
+            self._command_worker_thread.join(timeout=1.0)
+        self._command_worker_thread = None
+
+    def _command_worker_loop(self):
+        while not self._command_worker_stop.is_set():
+            try:
+                item = self._command_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if item is None:
+                self._command_queue.task_done()
+                break
+            try:
+                item.response = self._send_command_direct(item.cmd, item.wait_response, item.timeout)
+            except BaseException as exc:
+                item.exception = exc
+                logger.exception('UART command worker exception port=%s cmd=%s', self.port, item.cmd.hex(' '))
+            finally:
+                item.done.set()
+                self._command_queue.task_done()
 
     def _reader_loop(self):
         while not self._reader_stop.is_set():
@@ -307,6 +359,29 @@ class BafangUART:
                 self._rx_condition.wait(min(remaining, 0.05))
 
     def _send_command(self, cmd: bytes, wait_response: bool = True, timeout: float = 0.6) -> Optional[bytes]:
+        if not self.serial or not self._serial_is_open():
+            return None
+        if threading.current_thread() is self._command_worker_thread:
+            return self._send_command_direct(cmd, wait_response, timeout)
+
+        if not self._command_worker_thread or not self._command_worker_thread.is_alive():
+            self._start_command_worker()
+
+        if not self._command_worker_thread or not self._command_worker_thread.is_alive():
+            return self._send_command_direct(cmd, wait_response, timeout)
+
+        item = QueuedCommand(bytes(cmd), wait_response, timeout)
+        self._command_queue.put(item)
+        wait_timeout = max(timeout + REQUEST_SPACING + 5.0, 6.0)
+        if not item.done.wait(wait_timeout):
+            logger.error('UART command queue timeout port=%s cmd=%s wait_timeout=%.2f', self.port, cmd.hex(' '), wait_timeout)
+            return None
+        if item.exception is not None:
+            logger.error('UART command queue failed port=%s cmd=%s exception=%s', self.port, cmd.hex(' '), item.exception)
+            return None
+        return item.response
+
+    def _send_command_direct(self, cmd: bytes, wait_response: bool = True, timeout: float = 0.6) -> Optional[bytes]:
         if not self.serial or not self._serial_is_open():
             return None
         
@@ -1576,12 +1651,14 @@ class BafangUART:
         return experimental
 
     def torque_calibration(self) -> bool:
-        cmd = bytes([0x16, 0xA0, 0x01, 0x01, self._calculate_checksum(bytes([0x16, 0xA0, 0x01, 0x01]))])
+        payload = bytes([0x16, 0xA0, 0x01, 0x01])
+        cmd = payload + bytes([self._calculate_bafang_write_checksum(payload)])
         response = self._send_command(cmd)
         return response is not None and len(response) > 1 and response[1] == 0x01
 
     def set_wheel_circumference(self, circumference_mm: int) -> bool:
-        cmd = bytes([0x16, 0x52, 0x01, 0x06, circumference_mm & 0xFF, self._calculate_checksum(bytes([0x16, 0x52, 0x01, 0x06, circumference_mm & 0xFF]))])
+        payload = bytes([0x16, 0x52, 0x01, 0x06, circumference_mm & 0xFF])
+        cmd = payload + bytes([self._calculate_bafang_write_checksum(payload)])
         response = self._send_command(cmd)
         return response is not None
 
@@ -1601,7 +1678,8 @@ class BafangUART:
         }
 
     def reset_to_defaults(self) -> bool:
-        cmd = bytes([0x16, 0xFF, 0x01, 0x01, self._calculate_checksum(bytes([0x16, 0xFF, 0x01, 0x01]))])
+        payload = bytes([0x16, 0xFF, 0x01, 0x01])
+        cmd = payload + bytes([self._calculate_bafang_write_checksum(payload)])
         response = self._send_command(cmd)
         return response is not None
 
