@@ -490,8 +490,8 @@ public class MainActivity extends Activity {
                 serialPort.setParameters(BafangProtocol.BAUD_RATE, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE);
                 serialPort.purgeHwBuffers(true, true);
                 try {
-                    serialPort.setDTR(false);
-                    serialPort.setRTS(false);
+                    serialPort.setDTR(true);
+                    serialPort.setRTS(true);
                 } catch (UnsupportedOperationException ignored) {
                 }
                 PyObject bridgeClass = Python.getInstance().getModule("android_bridge").get("AndroidBafangController");

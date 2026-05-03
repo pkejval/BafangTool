@@ -1,7 +1,12 @@
 import json
+import logging
 from dataclasses import asdict, is_dataclass
 
 from protocol import BafangUART
+
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s [%(name)s] %(message)s')
+logger = logging.getLogger(__name__)
 
 
 class AndroidSerialTransport:
@@ -10,21 +15,42 @@ class AndroidSerialTransport:
         self.is_open = True
 
     def write(self, data):
-        self.java_port.writeBytes(bytes(data))
+        try:
+            payload = bytes(data)
+            logger.debug('Android UART TX bytes=%s', payload.hex(' '))
+            self.java_port.writeBytes(payload)
+        except Exception:
+            logger.exception('Android UART write exception')
+            raise
 
     def flush(self):
         pass
 
     def read(self, size):
-        data = self.java_port.readBytes(size)
-        return bytes((int(value) & 0xFF for value in data))
+        try:
+            data = self.java_port.readBytes(size)
+            payload = bytes((int(value) & 0xFF for value in data))
+            if payload:
+                logger.debug('Android UART RX bytes=%s', payload.hex(' '))
+            return payload
+        except Exception:
+            logger.exception('Android UART read exception size=%s', size)
+            raise
 
     def reset_input_buffer(self):
-        self.java_port.purgeInput()
+        try:
+            self.java_port.purgeInput()
+        except Exception:
+            logger.exception('Android UART purge input exception')
+            raise
 
     def close(self):
         self.is_open = False
-        self.java_port.closePort()
+        try:
+            self.java_port.closePort()
+        except Exception:
+            logger.exception('Android UART close exception')
+            raise
 
 
 def _plain(value):
@@ -49,7 +75,11 @@ class AndroidBafangController:
         self.controller = BafangUART("android-usb-serial", self.transport)
 
     def connect(self):
-        return self.controller.connect()
+        logger.info('Android BafangTool connect requested')
+        connected = self.controller.connect()
+        if not connected:
+            logger.error('Android BafangTool connect failed')
+        return connected
 
     def disconnect(self):
         self.controller.disconnect()

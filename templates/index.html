@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bafang M400 UART Tool</title>
+    <title>BafangTool</title>
     <style>
         * {
             margin: 0;
@@ -442,7 +442,7 @@
 <body>
     <div class="container">
         <header>
-            <h1>Bafang M400 UART Tool</h1>
+            <h1>BafangTool</h1>
             <p>Konfigurace motorů Bafang řady M400</p>
         </header>
 
@@ -840,7 +840,7 @@
         </div>
         
         <footer>
-            Bafang M400 UART Tool v1.2
+            BafangTool v1.2
         </footer>
         </div>
     </div>
@@ -859,6 +859,7 @@
         let writeSafety = { basic: false, pedal: false, throttle: false };
         let livePollTimer = null;
         let activeTabId = 'basic';
+        let controllerRefreshInFlight = false;
         const isCzech = (navigator.language || 'en').toLowerCase().startsWith('cs');
 
         const I18N_MAP = {
@@ -935,7 +936,7 @@
             'Varování: Vymaže veškeré nastavení!': 'Warning: Erases all settings!',
             'Reset do výchozích': 'Factory reset',
             'Zavřít': 'Close',
-            'Bafang M400 UART Tool v1.2': 'Bafang M400 UART Tool v1.2'
+            'BafangTool v1.2': 'BafangTool v1.2'
         };
 
         function tr(value) {
@@ -1205,6 +1206,8 @@
 
         function refreshController(options = {}) {
             if (!isConnected) { showModal('Chyba', 'Nejste připojeni', 'error'); return; }
+            if (controllerRefreshInFlight) return;
+            controllerRefreshInFlight = true;
             const shouldShowModal = options.showModal !== false;
             setRefreshBusy(true);
             setControllerRefreshStatus('Obnovuji data z controlleru...');
@@ -1283,7 +1286,10 @@
                     if (shouldShowModal) closeModal();
                     setControllerRefreshStatus(err?.message || 'Obnova selhala', true);
                 })
-                .finally(() => setRefreshBusy(false));
+                .finally(() => {
+                    controllerRefreshInFlight = false;
+                    setRefreshBusy(false);
+                });
         }
 
         function readParams() {
@@ -1332,16 +1338,32 @@
         }
         
         function getPedalParams() {
+            const signalNumber = parseInt(document.getElementById('pedal_signal_number').value);
+            const startPulse = parseInt(document.getElementById('pedal_start_pulse').value);
+            const torqueGain = parseInt(document.getElementById('pedal_torque_gain').value);
+            const torqueOffset = parseInt(document.getElementById('pedal_torque_offset').value);
+            const torqueStep = parseInt(document.getElementById('pedal_torque_step').value);
+            const cadenceGain = parseInt(document.getElementById('pedal_cadence_gain').value);
+            const cadenceMin = parseInt(document.getElementById('pedal_cadence_min').value);
+            const cadenceMax = parseInt(document.getElementById('pedal_cadence_max').value);
             return {
                 pedal_type: document.getElementById('pedal_pedal_type').value,
-                signal_number: parseInt(document.getElementById('pedal_signal_number').value),
-                start_pulse: parseInt(document.getElementById('pedal_start_pulse').value),
-                torque_gain: parseInt(document.getElementById('pedal_torque_gain').value),
-                torque_offset: parseInt(document.getElementById('pedal_torque_offset').value),
-                torque_step: parseInt(document.getElementById('pedal_torque_step').value),
-                cadence_gain: parseInt(document.getElementById('pedal_cadence_gain').value),
-                cadence_min: parseInt(document.getElementById('pedal_cadence_min').value),
-                cadence_max: parseInt(document.getElementById('pedal_cadence_max').value)
+                signal_number: signalNumber,
+                start_pulse: startPulse,
+                torque_gain: torqueGain,
+                torque_offset: torqueOffset,
+                torque_step: torqueStep,
+                cadence_gain: cadenceGain,
+                cadence_min: cadenceMin,
+                cadence_max: cadenceMax,
+                pedal_start_current: startPulse,
+                pedal_slow_start_mode: torqueGain,
+                pedal_signals_before_start: signalNumber,
+                pedal_time_to_stop: torqueOffset,
+                pedal_current_decay: torqueStep,
+                pedal_stop_decay: cadenceGain,
+                pedal_keep_current: cadenceMin,
+                work_mode: 10
             };
         }
         
@@ -1365,11 +1387,17 @@
         }
         
         function getThrottleParams() {
+            const startVoltage = parseInt(document.getElementById('throttle_start_voltage').value);
+            const endVoltage = parseInt(document.getElementById('throttle_end_voltage').value);
+            const startCurrent = parseInt(document.getElementById('throttle_start_current').value);
+            const mode = parseInt(document.getElementById('throttle_mode').value);
             return {
-                start_voltage: parseInt(document.getElementById('throttle_start_voltage').value),
-                end_voltage: parseInt(document.getElementById('throttle_end_voltage').value),
-                start_current: parseInt(document.getElementById('throttle_start_current').value),
-                mode: parseInt(document.getElementById('throttle_mode').value),
+                start_voltage: startVoltage,
+                end_voltage: endVoltage,
+                start_current: startCurrent,
+                mode: mode,
+                throttle_mode: mode,
+                throttle_start_current: startCurrent,
                 enabled: document.getElementById('throttle_enabled').checked
             };
         }

@@ -18,7 +18,7 @@ final class AndroidSerialPortBridge {
 
     public byte[] readBytes(int size) throws IOException {
         byte[] buffer = new byte[size];
-        int length = port.read(buffer, 2000);
+        int length = port.read(buffer, 80);
         if (length <= 0) {
             return new byte[0];
         }

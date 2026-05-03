@@ -10,11 +10,14 @@ from flask import Flask, render_template, request, jsonify, Response
 from werkzeug.exceptions import HTTPException
 from bafang.protocol import BafangUART
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s [%(name)s] %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = 'bafang-tool-secret-key'
+app.secret_key = 'BafangTool-secret-key'
 
 PROFILES_FILE = 'profiles.json'
 controller = None
@@ -45,10 +48,12 @@ class LiveDataService:
         with self._lock:
             self._interval = max(0.25, min(float(interval or 0.5), 5.0))
             if self._thread and self._thread.is_alive():
+                logger.info('Live data service already running interval=%.2fs', self._interval)
                 return
             self._stop.clear()
             self._thread = threading.Thread(target=self._run, name='BafangLiveData', daemon=True)
             self._thread.start()
+            logger.info('Live data service started interval=%.2fs', self._interval)
 
     def stop(self):
         self._stop.set()
@@ -57,6 +62,7 @@ class LiveDataService:
             thread.join(timeout=1.0)
         with self._lock:
             self._thread = None
+        logger.info('Live data service stopped')
 
     def reset(self):
         self.stop()
@@ -86,7 +92,7 @@ class LiveDataService:
                         self._failure_count += 1
                         self._last_error = 'No live data response'
             except Exception as e:
-                logger.warning('Live data read failed: %s', e)
+                logger.exception('Live data read failed')
                 with self._lock:
                     self._failure_count += 1
                     self._last_error = str(e)
@@ -124,6 +130,7 @@ def api_json(data, status_code: int = 200):
 
 @app.errorhandler(HTTPException)
 def handle_http_exception(e: HTTPException):
+    logger.warning('HTTP error path=%s method=%s status=%s error=%s', request.path, request.method, e.code, e)
     if request.path.startswith('/api/'):
         description = str(e.description) if e.description is not None else str(e)
         return _api_error_response(description, e.code or 500, e.__class__.__name__)
@@ -139,7 +146,9 @@ def handle_unhandled_exception(e: Exception):
 
 def get_available_ports():
     import serial.tools.list_ports
-    return [{'port': p.device, 'description': p.description} for p in serial.tools.list_ports.comports()]
+    ports = [{'port': p.device, 'description': p.description} for p in serial.tools.list_ports.comports()]
+    logger.info('Detected serial ports count=%d ports=%s', len(ports), ports)
+    return ports
 
 def load_profiles():
     if os.path.exists(PROFILES_FILE):
@@ -157,6 +166,7 @@ def require_connection(f):
     def decorated(*args, **kwargs):
         global controller
         if not controller or not controller.connected:
+            logger.warning('Rejected API request without controller connection path=%s method=%s', request.path, request.method)
             return jsonify({'error': 'Not connected'}), 400
         return f(*args, **kwargs)
     return decorated
@@ -204,15 +214,20 @@ def connect():
     port = payload.get('port')
     
     if not port:
+        logger.error('Connect requested without selected port')
         return jsonify({'success': False, 'error': 'No port selected'}), 400
     
     if controller and controller.connected:
+        logger.info('Disconnecting existing controller before reconnect port=%s', controller.port)
         live_service.reset()
         controller.disconnect()
     
+    logger.info('Connecting to controller port=%s', port)
     controller = BafangUART(port)
     if controller.connect():
+        logger.info('Controller connected port=%s device_info=%s', port, controller.device_info)
         return jsonify({'success': True})
+    logger.error('Controller connection failed port=%s', port)
     return jsonify({'success': False, 'error': 'Connection failed'}), 400
 
 @app.route('/api/disconnect', methods=['POST'])
@@ -220,6 +235,7 @@ def disconnect():
     global controller
     live_service.reset()
     if controller:
+        logger.info('Disconnecting controller port=%s connected=%s', controller.port, controller.connected)
         controller.disconnect()
     return jsonify({'success': True})
 
@@ -232,29 +248,42 @@ def status():
 @app.route('/api/read')
 @require_connection
 def read_params():
+    logger.info('Reading all known controller parameters')
     return api_json(get_controller().read_all_known_params())
 
 @app.route('/api/write', methods=['POST'])
 @require_connection
 def write_params():
     data = request.json or {}
+    logger.info('Writing all parameter sections keys=%s', sorted(data.keys()))
     result = get_controller().write_all(data.get('basic', {}), data.get('pedal', {}), data.get('throttle', {}))
+    if not result.get('success', False):
+        logger.error('Write all failed result=%s', result)
     return jsonify(result)
 
 @app.route('/api/write_basic', methods=['POST'])
 @require_connection
 def write_basic():
-    return jsonify(get_controller().write_basic(request.json or {}))
+    result = get_controller().write_basic(request.json or {})
+    if not result.get('success', False):
+        logger.error('Write basic failed result=%s', result)
+    return jsonify(result)
 
 @app.route('/api/write_pedal', methods=['POST'])
 @require_connection
 def write_pedal():
-    return jsonify(get_controller().write_pedal(request.json or {}))
+    result = get_controller().write_pedal(request.json or {})
+    if not result.get('success', False):
+        logger.error('Write pedal failed result=%s', result)
+    return jsonify(result)
 
 @app.route('/api/write_throttle', methods=['POST'])
 @require_connection
 def write_throttle():
-    return jsonify(get_controller().write_throttle(request.json or {}))
+    result = get_controller().write_throttle(request.json or {})
+    if not result.get('success', False):
+        logger.error('Write throttle failed result=%s', result)
+    return jsonify(result)
 
 @app.route('/api/live_data')
 @require_connection
@@ -329,14 +358,22 @@ def read_raw_throttle():
 @require_connection
 def send_raw_command():
     payload = request.json or {}
-    result = get_controller().send_raw_command(payload.get('command', ''))
+    command = payload.get('command', '')
+    logger.info('Sending raw command command=%s', command)
+    result = get_controller().send_raw_command(command)
+    if not result:
+        logger.error('Raw command returned no response command=%s', command)
     return jsonify(result or {'error': 'No response'})
 
 @app.route('/api/write_custom_raw', methods=['POST'])
 @require_connection
 def write_custom_raw():
     payload = request.json or {}
-    result = get_controller().write_custom_raw(payload.get('hex', ''))
+    hex_data = payload.get('hex', '')
+    logger.info('Sending custom raw write hex=%s', hex_data)
+    result = get_controller().write_custom_raw(hex_data)
+    if not result:
+        logger.error('Custom raw write returned no response hex=%s', hex_data)
     return jsonify(result or {'error': 'No response'})
 
 @app.route('/api/scan_commands')

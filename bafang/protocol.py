@@ -15,6 +15,7 @@ BAUDRATE = 1200
 DATA_BITS = 8
 PARITY = 'N'
 STOP_BITS = 1
+REQUEST_SPACING = 0.3
 
 @dataclass
 class CommandDef:
@@ -146,11 +147,13 @@ class BafangUART:
         self._rx_frames = deque(maxlen=64)
         self._rx_condition = threading.Condition()
         self._command_lock = threading.Lock()
+        self._last_command_at = 0.0
         self._reader_thread: Optional[threading.Thread] = None
         self._reader_stop = threading.Event()
 
     def connect(self) -> bool:
         try:
+            logger.info('Opening Bafang UART port=%s baudrate=%d data=%d parity=%s stop=%d', self.port, BAUDRATE, DATA_BITS, PARITY, STOP_BITS)
             if self.serial is None:
                 if serial is None:
                     raise RuntimeError('pyserial is not available and no serial transport was provided')
@@ -164,18 +167,20 @@ class BafangUART:
                 )
             self._drain_input()
             self._start_reader()
-            time.sleep(0.1)
+            time.sleep(REQUEST_SPACING)
             
             if self._connect_cmd():
                 self.connected = True
-                logger.info(f"Connected to {self.port}")
+                logger.info('Bafang UART connected port=%s device_info=%s', self.port, self.device_info)
                 return True
+            logger.error('Bafang UART handshake failed port=%s', self.port)
             return False
         except Exception as e:
-            logger.error(f"Connection error: {e}")
+            logger.exception('Bafang UART connection exception port=%s', self.port)
             return False
 
     def disconnect(self):
+        logger.info('Disconnecting Bafang UART port=%s connected=%s', self.port, self.connected)
         self._stop_reader()
         if self.serial and self._serial_is_open():
             self.serial.close()
@@ -231,7 +236,7 @@ class BafangUART:
                     self._append_rx_data(bytes(chunk))
             except Exception as e:
                 if not self._reader_stop.is_set():
-                    logger.error(f"Serial reader error: {e}")
+                    logger.exception('Serial reader exception port=%s', self.port)
                 break
 
     def _append_rx_data(self, data: bytes):
@@ -310,17 +315,30 @@ class BafangUART:
                 self._start_reader()
             expected_response_id = self._infer_response_id(cmd)
             with self._command_lock:
+                self._pace_command_locked()
                 self._clear_queued_frames()
+                logger.debug('UART TX port=%s cmd=%s expected_response=%s timeout=%.2f', self.port, cmd.hex(' '), f'0x{expected_response_id:02X}' if expected_response_id is not None else None, timeout)
                 self.serial.write(cmd)
                 self.serial.flush()
+                self._last_command_at = time.monotonic()
 
                 if not wait_response:
                     return b'\x01'
 
-                return self._wait_for_frame(expected_response_id, timeout)
+                response = self._wait_for_frame(expected_response_id, timeout)
+                if response:
+                    logger.debug('UART RX port=%s response=%s', self.port, response.hex(' '))
+                else:
+                    logger.warning('UART response timeout port=%s cmd=%s expected_response=%s timeout=%.2f', self.port, cmd.hex(' '), f'0x{expected_response_id:02X}' if expected_response_id is not None else None, timeout)
+                return response
         except Exception as e:
-            logger.error(f"Send command error: {e}")
+            logger.exception('Send command exception port=%s cmd=%s', self.port, cmd.hex(' '))
             return None
+
+    def _pace_command_locked(self):
+        elapsed = time.monotonic() - self._last_command_at
+        if elapsed < REQUEST_SPACING:
+            time.sleep(REQUEST_SPACING - elapsed)
 
     def _drain_input(self):
         for method in ('reset_input_buffer', 'flushInput'):
@@ -330,7 +348,7 @@ class BafangUART:
                     fn()
                     return
                 except Exception:
-                    pass
+                    logger.exception('Failed to drain input using %s port=%s', method, self.port)
 
     def _read_response(self, timeout: float = 0.3, size: int = 2048) -> bytes:
         deadline = time.time() + max(timeout, 0.3)
@@ -382,21 +400,32 @@ class BafangUART:
             return True
         return bool(is_open)
 
-    def _send_with_retry(self, cmd: bytes, expected_response_id: int, max_retries: int = 2) -> Optional[bytes]:
+    def _send_with_retry(self, cmd: bytes, expected_response_id: int, max_retries: int = 3) -> Optional[bytes]:
         """Send command with retry on failure"""
         for attempt in range(max_retries):
-            response = self._send_command(cmd, timeout=0.3)
+            response = self._send_command(cmd, timeout=0.8)
             if response and len(response) > 0 and response[0] == expected_response_id:
                 return response
+            logger.warning(
+                'UART command attempt failed port=%s attempt=%d/%d cmd=%s expected_response=0x%02X response=%s',
+                self.port,
+                attempt + 1,
+                max_retries,
+                cmd.hex(' '),
+                expected_response_id,
+                response.hex(' ') if response else None,
+            )
             if attempt < max_retries - 1:
-                time.sleep(0.1)
+                time.sleep(REQUEST_SPACING)
         return None
 
     def _connect_cmd(self) -> bool:
         cmd = bytes([0x11, 0x51, 0x04, 0xB0, 0x05])
-        response = self._send_command(cmd, timeout=0.3)
+        logger.info('Sending Bafang handshake port=%s cmd=%s', self.port, cmd.hex(' '))
+        response = self._send_with_retry(cmd, 0x51)
         
         if not response or response[0] != 0x51 or len(response) < 19:
+            logger.error('Invalid Bafang handshake response port=%s response=%s', self.port, response.hex(' ') if response else None)
             return False
             
         payload = self._payload(response)
@@ -409,6 +438,7 @@ class BafangUART:
             'max_current': payload[15] if len(payload) > 15 else None,
             'raw_connect_response': response.hex()
         }
+        logger.info('Bafang handshake accepted port=%s response=%s device_info=%s', self.port, response.hex(' '), self.device_info)
         return True
 
     def _read_ascii_info(self, cmd: bytes) -> Optional[str]:
@@ -418,7 +448,7 @@ class BafangUART:
         payload = self._payload(response)
         return bytes(payload).decode('ascii', errors='ignore').strip()
 
-    def _refresh_openbafang_info(self):
+    def _refresh_bafang_info(self):
         firmware = self._read_ascii_info(bytes([0x11, 0x50]))
         system_code = self._read_ascii_info(bytes([0x14, 0x13]))
         serial_number = self._read_ascii_info(bytes([0x14, 0x14]))
@@ -666,7 +696,7 @@ class BafangUART:
                 }
             return None
         except Exception as e:
-            logger.error(f"Raw command error: {e}")
+            logger.exception('Raw command exception hex=%s', command_hex)
             return None
 
     def read_all_known_params(self) -> Dict[str, Any]:
@@ -692,7 +722,7 @@ class BafangUART:
                     self._log_parse_issue(name, read_warnings[name])
                 return parsed
             except Exception as e:
-                logger.error(f"Failed to read {name}: {e}")
+                logger.exception('Failed to read section=%s', name)
                 read_errors[name] = {
                     'message': str(e),
                     'exception_type': e.__class__.__name__,
@@ -701,14 +731,14 @@ class BafangUART:
                 return None
             
         basic = safe_read('basic', self.read_basic)
-        # OpenBafangTool reads basic twice; a number of controllers return a
-        # stale first frame after connect, so refresh it once before rendering.
+        # Some controllers return a stale first frame after connect, so refresh
+        # basic once before rendering.
         basic = safe_read('basic', lambda: self.read_basic(use_cache=False)) or basic
         pedal = safe_read('pedal', self.read_pedal)
         throttle = safe_read('throttle', self.read_throttle)
+        self._refresh_bafang_info()
         live_data = safe_read('live_data', self.read_live_data, required=False)
         errors = safe_read('errors', self.read_errors, required=False)
-        self._refresh_openbafang_info()
         result = {
             'device_info': self.device_info,
             'basic': basic,
@@ -1181,7 +1211,7 @@ class BafangUART:
             0x00
         ])
         
-        return cmd + bytes([self._calculate_checksum(cmd)])
+        return cmd + bytes([self._calculate_bafang_write_checksum(cmd)])
 
     def _build_pedal_command(self, params: Dict[str, Any]) -> bytes:
         pedal_types = {'None': 0, 'DH-Sensor-12': 1, 'BB-Sensor-32': 2, 'DoubleSignal-24': 3}
@@ -1200,9 +1230,9 @@ class BafangUART:
                 self._clamp(params.get('pedal_slow_start_mode', params.get('torque_gain', params.get('slow_start_mode', 0x0A))), 0, 255, 0x0A),
                 self._clamp(params.get('pedal_signals_before_start', params.get('signal_number', 0x06)), 0, 255, 0x06),
                 self._clamp(params.get('work_mode', 0x0A), 0, 255, 0x0A),
-                self._clamp(time_to_stop // 10 if time_to_stop > 255 else time_to_stop, 0, 255, 0x19),
+                self._clamp(time_to_stop // 10, 0, 255, 0x19),
                 self._clamp(params.get('pedal_current_decay', params.get('torque_step', params.get('current_decay', 0x08))), 0, 255, 0x08),
-                self._clamp(stop_decay // 10 if stop_decay > 255 else stop_decay, 0, 255, 0x00),
+                self._clamp(stop_decay // 10, 0, 255, 0x00),
                 self._clamp(params.get('pedal_keep_current', params.get('cadence_min', params.get('keep_current', 0x14))), 0, 100, 0x14),
             ])
             return cmd + bytes([self._calculate_bafang_write_checksum(cmd)])
@@ -1223,7 +1253,7 @@ class BafangUART:
             self._clamp(params.get('cadence_max', 0x14), 0, 255, 0x14)
         ])
         
-        return cmd + bytes([self._calculate_checksum(cmd)])
+        return cmd + bytes([self._calculate_bafang_write_checksum(cmd)])
 
     def _build_throttle_command(self, params: Dict[str, Any]) -> bytes:
         if self._section_meta.get('throttle', {}).get('variant') == 'fallback':
@@ -1249,7 +1279,34 @@ class BafangUART:
             self._clamp(params.get('enabled', 0x00), 0, 1, 0x00)
         ])
         
-        return cmd + bytes([self._calculate_checksum(cmd)])
+        return cmd + bytes([self._calculate_bafang_write_checksum(cmd)])
+
+    def _build_serial_number_command(self, serial_number: str) -> bytes:
+        payload = str(serial_number).encode('ascii')
+        cmd = bytes([0x17, 0x01, len(payload)]) + payload
+        return cmd + bytes([self._calculate_bafang_write_checksum(cmd)])
+
+    def write_serial_number(self, serial_number: str) -> Dict[str, Any]:
+        serial_number = str(serial_number or '').strip()
+        if len(serial_number) < 3 or len(serial_number) > 60:
+            return {'success': False, 'error': 'Serial number length must be 3-60 ASCII characters.', 'code': None}
+        try:
+            serial_number.encode('ascii')
+        except UnicodeEncodeError:
+            return {'success': False, 'error': 'Serial number must contain ASCII characters only.', 'code': None}
+
+        cmd = self._build_serial_number_command(serial_number)
+        response = self._send_command(cmd)
+
+        if response is None:
+            return {'success': False, 'error': 'No response from controller', 'code': None}
+
+        result_code = response[1] if len(response) > 1 else None
+        if result_code == len(serial_number):
+            self.device_info['serial_number'] = serial_number
+            return {'success': True, 'error': None, 'code': result_code}
+
+        return {'success': False, 'error': f'Serial number write rejected (code: {result_code})', 'code': result_code}
 
     def write_basic(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if 'basic' not in self._initial_snapshot:
@@ -1438,7 +1495,7 @@ class BafangUART:
                 }
             return None
         except Exception as e:
-            logger.error(f"Custom write error: {e}")
+            logger.exception('Custom write exception hex=%s', hex_data)
             return None
 
     def read_live_data(self) -> Optional['BafangUART.LiveData']:
